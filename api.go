@@ -25,6 +25,7 @@ import (
 	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/conflict"
 	"github.com/ApolloF/syncer/internal/discover"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -865,6 +866,9 @@ func launcherGamesFile() string { return filepath.Join(paths.AppDir(), "launcher
 // serveAPI serves the launcher API for the Syncer window until ctx ends.
 // While the --api helper holds the pipe, it tries again every few seconds.
 func serveAPI(ctx context.Context, a *App) {
+	if !features.Launchers {
+		return
+	}
 	for {
 		ln, err := listenAPI(apiPipe)
 		if err == nil {
@@ -889,6 +893,10 @@ func serveAPI(ctx context.Context, a *App) {
 // launcher that needs Syncer while its window isn't open. It exits after a
 // minute without connections, or right away when Syncer already serves it.
 func runAPI() {
+	if !features.Launchers {
+		return // exit 0 and no pipe: a launcher sees the same as with no Syncer running, and carries on
+	}
+	defer logx.RecoverExit("launcher API helper")
 	ln, err := listenAPI(apiPipe)
 	if err != nil {
 		return // the window (or another helper) serves it

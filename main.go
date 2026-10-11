@@ -12,7 +12,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
 	"github.com/ApolloF/syncer/internal/logx"
-	"github.com/ApolloF/syncer/internal/tasks"
 )
 
 //go:embed all:frontend/dist
@@ -22,6 +21,7 @@ var assets embed.FS
 var version = "dev"
 
 func main() {
+	logx.RecordCrashes()
 	startHidden := false
 	for _, a := range os.Args[1:] {
 		if strings.HasPrefix(a, afterUpdateArg) { // started by the Syncer it updated
@@ -41,9 +41,7 @@ func main() {
 			runResume()
 			return
 		case "--uninstall": // called by the uninstaller
-			_ = tasks.Delete(tasks.BackupTask)
-			_ = tasks.Delete(tasks.ResumeTask)
-			removeAutostart()
+			runUninstall()
 			return
 		}
 	}
@@ -63,7 +61,7 @@ func main() {
 		StartHidden:      startHidden,
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
-			go serveAPI(ctx, app)
+			go logx.Run("launcher API", func() { serveAPI(ctx, app) })
 		},
 		OnBeforeClose: app.beforeClose,
 		OnShutdown:    app.shutdown,

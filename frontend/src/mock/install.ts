@@ -39,6 +39,8 @@ export function installMock() {
   const iso = (minutesAgo: number) => new Date(now - minutesAgo * minute).toISOString()
   const never = '0001-01-01T00:00:00Z'
   const params = new URLSearchParams(location.search)
+  // ?public mocks the public build (no mods, launchers or Google sign-in; backing up into a folder), for the README's screenshots.
+  const pub = params.has('public')
   const me = 'Desktop'
   const home = 'C:\\Users\\Alex'
 
@@ -66,6 +68,12 @@ export function installMock() {
       backupBytes: Math.round(bytes * 1.6), exclude: [], newerAt: null, split: false, account: '', kind: '',
     } satisfies Plain<main.FolderView>),
   )
+
+  // The public screenshots use made-up games, not real titles.
+  if (pub) {
+    const madeUp: [string, string][] = [['Ember Crown','Saved Games\\Ember Crown'],['Frostline','AppData\\Local\\Frostline\\Saved'],['Grimwald','Documents\\My Games\\Grimwald'],['Hollow Tide','AppData\\Roaming\\HollowTide'],['Iron Veil','Saved Games\\Iron Veil'],['Lumen Drift','AppData\\LocalLow\\Driftworks\\Lumen Drift'],['Neon Meridian','Documents\\Neon Meridian\\Profiles'],['Quiet Harbor','AppData\\Local\\QuietHarbor\\Saves'],['Sable Run','Documents\\Sable Run'],['Starfall Protocol','AppData\\Local\\Starfall\\Saved\\SaveGames'],['Tidewatch','AppData\\Roaming\\Tidewatch\\Saves'],['Wren Hollow','Documents\\Wren Hollow\\Saves']]
+    folders.forEach((f, i) => Object.assign(f, { label: madeUp[i][0], game: madeUp[i][0], path: `${home}\\${madeUp[i][1]}` }))
+  }
 
   // ---- accounts: Alex plays here, Sam on the laptop, Mia in the living room ----
   const alex = 'q4alxe', sam = 'p7samd', mia = 'r2miaz'
@@ -190,6 +198,7 @@ export function installMock() {
   } satisfies Plain<store.ModFolder>)
 
   // Found here but not synced yet.
+  if (pub) modFolders.length = 0
   const modsFound = [
     main.GameView.createFrom({ name: 'The Witcher 3: Wild Hunt (Vortex mods)', path: `${vortex}\\witcher3\\mods`, known: true, size: 640 * MB, files: 1210, modified: iso(4300), kind: 'mods', manager: 'vortex', modGame: 'witcher3', modKey: 'vortex:witcher3/staging', syncedBy: '', installed: true, dismissed: false } satisfies Plain<main.GameView>),
     main.GameView.createFrom({ name: 'The Witcher 3: Wild Hunt (Vortex load order)', path: `${vortex}\\witcher3\\profiles`, known: true, size: 96 * KB, files: 5, modified: iso(4300), kind: 'mods-profiles', manager: 'vortex', modGame: 'witcher3', modKey: 'vortex:witcher3/profiles', syncedBy: '', installed: true, dismissed: false } satisfies Plain<main.GameView>),
@@ -215,19 +224,19 @@ export function installMock() {
   ]
 
   let settings = store.Settings.createFrom({
-    theme: params.get('theme') ?? '', backupEnabled: true, backupRoot: '', driveRoot: '', backupBackend: 'google',
+    theme: params.get('theme') ?? '', backupEnabled: true, backupRoot: pub ? 'D:\\GameSaveBackup' : '', driveRoot: '', backupBackend: pub ? '' : 'google',
     intervalHours: 6, keepDays: 30, noBackup: {}, ignored: {}, showSteamCloud: false, autoAdd: true, autoAddMaxGB: 2,
     dismissed: {}, closeToTray: true, startAtLogin: true, migrated: true, pauseWhileGaming: true, installedOnly: true,
     syncDisabled: false, backupOnly: {}, pausedUntil: null, notify: true, noUpdateCheck: false, noAutoUpdate: false,
-    noCloudPull: false, noHoldWhilePlaying: false, exclude: {}, findMods: true, autoAddMods: false,
-    syncDeployedMods: true, shareVortexMods: true, modsMaxGB: 5, modsChanged: iso(60 * 24 * 9),
+    noCloudPull: false, noHoldWhilePlaying: false, exclude: {}, findMods: !pub, autoAddMods: false,
+    syncDeployedMods: !pub, shareVortexMods: !pub, modsMaxGB: 5, modsChanged: iso(60 * 24 * 9),
     mods: Object.fromEntries(modFolders.map(f => [f.id, modSettings(f)])), accounts: true, launchers: {},
   } satisfies Plain<store.Settings>)
 
   const myID = 'K7QPXAB-2NFD4ZL-W3H6YRC-9TMUE5J-QGV8S1D-LXA4OBC-HN2WKPE-R6TY7ZM'
   let lastBackup = store.BackupRun.createFrom({
     started: iso(15), finished: iso(14), ok: true, folders: folders.length, copied: 23, versions: 118,
-    bytes: 183 * MB, errors: [], held: [], target: 'Google Drive', notPruned: '',
+    bytes: 183 * MB, errors: [], held: [], target: pub ? 'D:\\GameSaveBackup' : 'Google Drive', notPruned: '',
   } satisfies Plain<store.BackupRun>)
   let backingUp = false
 
@@ -236,13 +245,17 @@ export function installMock() {
     devices: 2, online: 2, pending: 0, folders: folders.length, syncing: 0, errors: 0, issues: [],
     conflicts: folders.reduce((n, f) => n + f.conflicts, 0), overlaps: 0,
     drive: { found: false, running: false, myDrive: '', drives: [] },
-    google: { available: true, signedIn: true, account: 'alex@example.com', synced: lastBackup.finished, error: '' },
-    target: `${home}\\AppData\\Local\\Syncer\\GameSaveBackup`, lastBackup, backingUp, gaming: false, paused: false,
+    google: { available: !pub, signedIn: !pub, account: 'alex@example.com', synced: lastBackup.finished, error: '', retired: false },
+    features: pub
+      ? { mods: false, googleSignIn: false, launchers: false, personal: false }
+      : { mods: true, googleSignIn: true, launchers: true, personal: true }, // the dev mock is the personal build
+    notices: [],
+    target: pub ? 'D:\\GameSaveBackup' : `${home}\\AppData\\Local\\Syncer\\GameSaveBackup`, lastBackup, backingUp, gaming: false, paused: false,
     settings, version: 'v1.0.0', versionGaps: [],
   } satisfies Plain<main.Overview>)
 
   const devices = main.DevicesView.createFrom({
-    myID, myName: me, qr: '', pending: [],
+    myID, myName: me, qr: '', pending: [], requests: [], ignored: [],
     devices: [
       { id: 'LP4XQ2M-ABCDEF1-GHIJKL2-MNOPQR3-STUVWX4-YZ12345-6789ABC-DEFGHJK', name: 'Laptop', connected: true, address: '192.168.1.24:22000', via: 'lan', completion: 100, needBytes: 0, version: 'v1.0.0', versionGap: '' },
       { id: 'LR9ZYT3-KLMNOP1-QRSTUV2-WXYZAB3-CDEFGH4-JKLMNP5-QRSTUV6-WXYZ234', name: 'Living-room PC', connected: true, address: '192.168.1.31:22000', via: 'lan', completion: 100, needBytes: 0, version: 'v1.0.0', versionGap: '' },
@@ -327,6 +340,8 @@ export function installMock() {
       .map(([rel, size, ago, owner]) => main.SaveFile.createFrom({ rel, size: Math.round(size), modified: iso(ago), owner })),
     Log: () => [`${iso(14)} backup: ${folders.length} folders, 23 files updated`],
     ModSettingsDiffer: () => [],
+    DismissNotice: () => undefined,
+    UseDriveApp: () => undefined,
     VortexShares: vortexShares,
     ModAudit: (id: string) => audits.filter(e => e.folder === id),
     RunModAudit: async (id: string) => {

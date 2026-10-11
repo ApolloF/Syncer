@@ -2,7 +2,8 @@
   import Icon from '../lib/Icon.svelte'
   import { ui, attempt, refresh, showIssue } from '../lib/state.svelte'
   import { ago, pausedUntil } from '../lib/fmt'
-  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate } from '../../wailsjs/go/main/App'
+  import { googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered, overviewSubtitle, updatesByRebuild } from '../lib/features'
+  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate, DismissNotice } from '../../wailsjs/go/main/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
   const o = $derived(ui.overview)
@@ -18,11 +19,15 @@
   const steps = $derived.by(() => {
     if (!o) return []
     const s: { key: string; title: string; text: string; action?: string; icon: string }[] = []
+    if (o.notices?.includes('modsFrozen'))
+      s.push({ key: 'notice:modsFrozen', icon: 'alert', title: 'Mod syncing is gone', text: "Mod syncing isn't part of Syncer anymore. Your mod folders were paused and left as they are.", action: 'OK' })
     if (o.paused)
       s.push({ key: 'paused', icon: 'pause', title: `Paused until ${pausedUntil(o.settings.pausedUntil)}`, text: 'Syncing and automatic backups are paused on this PC. They pick up again on their own.', action: 'Resume now' })
     const ahead = o.versionGaps?.find((g) => g.gap === 'newer')
     const behind = o.versionGaps?.filter((g) => g.gap === 'older') ?? []
-    if (o.update)
+    if (o.update && updatesByRebuild(o))
+      s.push({ key: 'updatemanual', icon: 'upload', title: `Syncer ${o.update.latest} is available`, text: `You have ${o.version}. This is the personal build: rebuild it from the source to update.`, action: 'View release' })
+    else if (o.update)
       s.push({ key: 'update', icon: 'upload', title: `Syncer ${o.update.latest} is available`, text: `You have ${o.version}.${ahead ? ` ${ahead.name} already runs ${ahead.version}; update so both PCs understand each other's changes.` : ''} Syncer downloads the new version from GitHub and restarts.`, action: 'Update now' })
     else if (ahead)
       s.push({ key: 'peerahead', icon: 'upload', title: 'Update Syncer on this PC', text: `${ahead.name} runs Syncer ${ahead.version}, this PC ${o.version}. PCs on different versions may not understand each other's changes.`, action: 'Check for updates' })
@@ -37,11 +42,13 @@
       s.push({ key: 'sterr', icon: 'alert', title: 'Can\'t talk to Syncthing', text: o.syncthing.error })
     else if (!o.syncthing.running)
       s.push({ key: 'start', icon: 'play', title: 'Sync is not running', text: 'Start Syncthing. It will also start automatically when you sign in.', action: 'Start' })
-    if (o.settings.backupBackend === 'google') {
+    if (googleRetired(o))
+      s.push({ key: 'googlegone', icon: 'cloud', title: 'Choose a backup folder', text: googleRetiredNotice, action: 'Open Backup' })
+    else if (googleBackendOn(o)) {
       if (!o.google.signedIn)
         s.push({ key: 'google', icon: 'cloud', title: 'Signed out of Google', text: 'Backups wait until you sign in again under Backup.', action: 'Open Backup' })
     } else if (!o.drive.found && !o.settings.backupRoot)
-      s.push({ key: 'drive', icon: 'cloud', title: 'Connect Google Drive', text: o.google.available ? 'Install Google Drive for desktop, or sign in to Google under Backup. Syncer backs up into it automatically.' : 'Install Google Drive for desktop and sign in. Syncer backs up into it automatically.', action: 'Get Google Drive' })
+      s.push({ key: 'drive', icon: 'cloud', title: 'Connect Google Drive', text: googleSignInOffered(o) ? 'Install Google Drive for desktop, or sign in to Google under Backup. Syncer backs up into it automatically.' : 'Install Google Drive for desktop and sign in. Syncer backs up into it automatically.', action: 'Get Google Drive' })
     else if (o.drive.found && !o.drive.running && !o.settings.backupRoot)
       s.push({ key: 'driveoff', icon: 'cloud', title: 'Google Drive is not running', text: 'Backups are saved locally and upload once Google Drive for desktop runs again.' })
     if (o.syncthing.running && o.devices === 0)
@@ -59,7 +66,9 @@
     if (key === 'install') run(key, InstallSyncthing, 'Syncthing installed and running')
     else if (key === 'start') run(key, StartSyncthing, 'Sync started')
     else if (key === 'drive') BrowserOpenURL('https://www.google.com/drive/download/')
-    else if (key === 'google') ui.view = 'backup'
+    else if (key === 'google' || key === 'googlegone') ui.view = 'backup'
+    else if (key.startsWith('notice:')) run(key, () => DismissNotice(key.slice(7)))
+    else if (key === 'updatemanual') BrowserOpenURL(o!.update!.url)
     else if (key === 'link' || key === 'pending' || key === 'peerbehind') ui.view = 'devices'
     else if (key === 'peerahead') run(key, async () => { if (!(await CheckForUpdate())) throw new Error("GitHub doesn't offer a newer Syncer to this PC yet") })
     else if (key === 'conflicts' || key === 'overlaps') ui.view = 'games'
@@ -82,7 +91,7 @@
 
 <header>
   <h1>Overview</h1>
-  <p class="muted">Your game saves, on every PC and safe in Google Drive.</p>
+  <p class="muted">{overviewSubtitle(o)}</p>
 </header>
 
 {#if steps.length}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/ApolloF/syncer/internal/accounts"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/store"
@@ -44,7 +46,13 @@ func (a *App) Pause(until int64) error {
 		ctx, cancel := a.callCtx()
 		defer cancel()
 		if err := syncPause(ctx, c); err != nil {
+			// Not in effect (the folders couldn't be recorded or paused): don't
+			// leave the window saying "Paused until" for a pause that isn't.
 			logx.Printf("pause: %v", err)
+			if rerr := a.Resume(); rerr != nil {
+				logx.Printf("pause: undoing it: %v", rerr)
+			}
+			return errors.New("Couldn't pause right now. Try again in a moment.")
 		}
 	}
 	logx.Printf("paused syncing and backups until %s", t.Format("Mon 15:04"))
@@ -121,24 +129,38 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 	}
 	var errs []error
 	if paused {
-		var now []string
+		var todo []string
 		for _, f := range fs {
-			if f.Paused {
-				continue
+			if !f.Paused {
+				todo = append(todo, f.ID)
 			}
-			if err := c.PatchFolder(ctx, f.ID, map[string]any{"paused": true}); err != nil {
-				errs = append(errs, err)
-				continue
-			}
-			now = append(now, f.ID)
 		}
-		if len(now) > 0 {
-			store.UpdateState(func(st *store.State) {
-				for _, id := range now {
+		// Remembered before pausing, so a crash in between can't leave a
+		// folder paused that nothing will ever resume.
+		if len(todo) > 0 {
+			err := store.UpdateState(func(st *store.State) {
+				for _, id := range todo {
 					if !slices.Contains(st.PausedFolders, id) {
 						st.PausedFolders = append(st.PausedFolders, id)
 					}
 				}
+			})
+			if err != nil {
+				return fmt.Errorf("not pausing folders that couldn't be remembered: %w", err)
+			}
+		}
+		var failed []string
+		for _, id := range todo {
+			if err := c.PatchFolder(ctx, id, map[string]any{"paused": true}); err != nil {
+				errs = append(errs, err)
+				failed = append(failed, id)
+			}
+		}
+		if gone := notPaused(ctx, c, failed); len(gone) > 0 {
+			store.UpdateState(func(st *store.State) {
+				st.PausedFolders = slices.DeleteFunc(st.PausedFolders, func(id string) bool {
+					return slices.Contains(gone, id)
+				})
 			})
 		}
 		return errors.Join(errs...)
@@ -166,7 +188,7 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 		}
 		// A mod folder waits while its mod manager is open (see modsTick),
 		// and a PC receiving deployed mods keeps its folder paused.
-		if isMod(s, id) && (!holdable(s, id) || mods.ManagerRunning(processPaths())) {
+		if isMod(s, id) && (!features.Mods || !holdable(s, id) || mods.ManagerRunning(processPaths())) {
 			if holdable(s, id) {
 				modHeld = append(modHeld, id)
 			}
@@ -194,6 +216,7 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 
 // runResume is what the one-off \Syncer-Resume task runs.
 func runResume() {
+	defer logx.RecoverExit("resume")
 	s := store.LoadSettings()
 	if s.Paused() {
 		return // the pause was extended; its own task will come
@@ -216,6 +239,85 @@ func runResume() {
 			logx.Printf("resume: %v", err)
 		}
 	}
+}
+
+// notPaused returns those of ids that Syncthing really doesn't have paused.
+// A pause that came back with an error may still have gone through, so the
+// folders are looked at again, and the ones that are paused stay remembered.
+// If Syncthing can't be asked, none is dropped.
+func notPaused(ctx context.Context, c *syncthing.Client, ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	fs, err := c.AllFolders(ctx)
+	if err != nil {
+		return nil
+	}
+	paused := map[string]bool{}
+	for _, f := range fs {
+		paused[f.ID] = f.Paused
+	}
+	return slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return paused[id] })
+}
+
+// runUninstall is what the uninstaller runs. Nothing of Syncer will be left
+// to resume the folders it paused, so it does that now, and removes the
+// tasks and the start-with-Windows entry. Syncthing and all data stay.
+func runUninstall() {
+	defer logx.RecoverExit("uninstall")
+	_ = tasks.Delete(tasks.BackupTask)
+	_ = tasks.Delete(tasks.ResumeTask)
+	removeAutostart()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if c, err := syncthing.New(); err == nil {
+		if err := releaseFolders(ctx, c); err != nil {
+			logx.Printf("uninstall: %v", err)
+		}
+	}
+}
+
+// releaseFolders resumes the folders Syncer paused for a pause or a running
+// game and forgets them. Folders paused by hand stay paused. So do the mod
+// folders held on purpose (ModHeld), which is why that list isn't released
+// here: they must not sync while a mod manager may change them. A mod folder
+// that receives deployed mods stays paused too, as in syncPause.
+func releaseFolders(ctx context.Context, c *syncthing.Client) error {
+	s, err := store.UpdateSettings(func(s *store.Settings) { s.PausedUntil = time.Time{} })
+	if err != nil {
+		return err
+	}
+	st := store.LoadState()
+	held := slices.Concat(st.PausedFolders, st.GamePaused)
+	if len(held) == 0 {
+		return nil
+	}
+	fs, err := c.Folders(ctx)
+	if err != nil {
+		return err
+	}
+	exists := map[string]bool{}
+	for _, f := range fs {
+		exists[f.ID] = true
+	}
+	var errs []error
+	failed := map[string]bool{}
+	for _, id := range held {
+		if !exists[id] || failed[id] || isMod(s, id) && !holdable(s, id) {
+			continue
+		}
+		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
+			errs = append(errs, err)
+			failed[id] = true
+		}
+	}
+	keep := func(ids []string) []string {
+		return slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return !failed[id] })
+	}
+	store.UpdateState(func(s *store.State) {
+		s.PausedFolders, s.GamePaused = keep(s.PausedFolders), keep(s.GamePaused)
+	})
+	return errors.Join(errs...)
 }
 
 // scheduleResume registers the task that ends the pause at t.

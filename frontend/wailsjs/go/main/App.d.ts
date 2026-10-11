@@ -7,6 +7,8 @@ import {mods} from '../models';
 import {backup} from '../models';
 import {store} from '../models';
 
+export function AcceptDevice(arg1:string):Promise<void>;
+
 export function Accounts():Promise<main.AccountsView>;
 
 export function AddBackupOnly(arg1:string,arg2:string):Promise<void>;
@@ -20,6 +22,8 @@ export function AddFolder(arg1:string,arg2:string):Promise<void>;
 export function AddModFolder(arg1:string):Promise<void>;
 
 export function AdoptBackup(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<number>;
+
+export function AllowJoin(arg1:string):Promise<void>;
 
 export function ApplyModUpdate(arg1:string,arg2:main.ApplyConfirm):Promise<void>;
 
@@ -51,6 +55,8 @@ export function Devices():Promise<main.DevicesView>;
 
 export function DismissDevice(arg1:string):Promise<void>;
 
+export function DismissNotice(arg1:string):Promise<void>;
+
 export function EditAccount(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function Folders():Promise<Array<main.FolderView>>;
@@ -58,6 +64,8 @@ export function Folders():Promise<Array<main.FolderView>>;
 export function GetNewer(arg1:string):Promise<number>;
 
 export function HandOverMods(arg1:string):Promise<void>;
+
+export function IgnoreJoin(arg1:string):Promise<void>;
 
 export function InstallSyncthing():Promise<void>;
 
@@ -162,6 +170,8 @@ export function SwitchDecision(arg1:string,arg2:string):Promise<void>;
 export function SyncAvailable(arg1:string):Promise<void>;
 
 export function UndoAll(arg1:main.UndoOptions):Promise<main.UndoReport>;
+
+export function UseDriveApp():Promise<void>;
 
 export function UseModSettingsEverywhere():Promise<void>;
 

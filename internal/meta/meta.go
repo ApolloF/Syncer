@@ -24,6 +24,7 @@ import (
 
 	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/discover"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/mods"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -181,8 +182,10 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			return st.GlobalBytes
 		})}
 	rememberModSizes(settings, mine.Folders)
-	ms := ModSettingsOf(settings)
-	mine.Mods = &ms
+	if features.Mods { // a build without mods publishes none: PCs read a missing entry as "not shared"
+		ms := ModSettingsOf(settings)
+		mine.Mods = &ms
+	}
 	if len(ast.Accounts) > 0 || len(ast.Records) > 0 {
 		pub := ast.Shared
 		pub.Active = ""
@@ -274,6 +277,9 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	// they were added with.
 	for _, f := range byID {
 		mf, isMod := settings.Mods[f.ID]
+		if isMod && !features.Mods {
+			continue // left as it is
+		}
 		if isMod && mf.Kind == mods.KindDeployed && mf.Role != RoleSource {
 			continue
 		}
@@ -497,6 +503,7 @@ const (
 	SkipUbisoftCloud = "ubisoft-cloud" // Ubisoft Connect's own save folder, in Ubisoft's cloud
 	SkipNoRoot       = "not-here"      // the folder it's in doesn't exist on this PC (no Ubisoft Connect)
 	SkipLink         = "link"          // this PC reaches the folder through a junction or symbolic link
+	SkipLaunchersOff = "launchers-off" // a launcher's own data, and this build has no launcher support
 
 	// Mod folders.
 	SkipModsOff             = "mods-off"              // "Find installed mods" is off here
@@ -531,6 +538,9 @@ var (
 func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) bool, synced []string) (string, string) {
 	if !paths.ValidID(sf.ID) || sf.ID == FolderID {
 		return "", SkipUnsafe
+	}
+	if sf.Launcher != "" && !features.Launchers {
+		return "", SkipLaunchersOff
 	}
 	if sf.Kind != "" || mods.IsModRoot(sf.Root) {
 		return adoptableMod(sf, s, synced)
@@ -592,7 +602,7 @@ func adoptableMod(sf SharedFolder, s store.Settings, synced []string) (string, s
 	if !ok || kind != sf.Kind || sf.ModGame != mods.GameOf(sf.Root) {
 		return "", SkipUnsafe
 	}
-	if !s.FindMods {
+	if !features.Mods || !s.FindMods {
 		return "", SkipModsOff
 	}
 	if kind == mods.KindDeployed && !s.SyncDeployedMods {
@@ -756,7 +766,8 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 	var out []Avail
 	for _, df := range readOtherFiles(st.MyID) {
 		for _, sf := range df.Folders {
-			if have[sf.ID] {
+			if have[sf.ID] || sf.Launcher != "" && !features.Launchers ||
+				(sf.Kind != "" || mods.IsModRoot(sf.Root)) && !features.Mods {
 				continue
 			}
 			if g, _, ok := accounts.ParseFolderID(sf.ID); ok || isSplit(sf.ID) {
@@ -910,7 +921,7 @@ func ModSpec(id, label, path, kind string, source bool) FolderSpec {
 		if kind == mods.KindStaging {
 			spec.MarkerName = mods.StagingMarker
 		}
-		spec.Paused = HoldNewMod != nil && HoldNewMod(id)
+		spec.Paused = features.Mods && HoldNewMod != nil && HoldNewMod(id)
 		// Syncthing's usual limit: conflict copies sit among the mods,
 		// and replaced files are kept in the versions folder anyway.
 		spec.MaxConflicts = new(10)

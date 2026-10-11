@@ -92,7 +92,7 @@ func TestCleanExclusions(t *testing.T) {
 	if err != nil || !slices.Equal(got, []string{"*.log", "Screenshots", "(?i)*shadercache*"}) {
 		t.Fatalf("got %q, %v", got, err)
 	}
-	for _, bad := range []string{"*", "**", "/", "/**", "(?i)*", "#include x", "!keep", "// c", "a\nb", strings.Repeat("x", 201)} {
+	for _, bad := range []string{"*", "**", "/", "/**", "(?i)*", "(?d)*.tmp", "(?i)(?d)*.tmp", "(?D)x", "#include x", "!keep", "// c", "a\nb", strings.Repeat("x", 201)} {
 		if _, err := cleanExclusions([]string{bad}); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -175,5 +175,19 @@ func TestWithSyncIgnores(t *testing.T) {
 	}
 	if got := withSyncIgnores("", []string{"*.log", "STEAM_AUTOCLOUD.VDF"}); !slices.Equal(got, append(base, "*.log")) {
 		t.Errorf("with exclusions: %v", got)
+	}
+}
+
+func TestSavedDeletePatternsAreAppliedWithoutDelete(t *testing.T) {
+	got := withSyncIgnores("", []string{"*.log", "(?d)*.tmp", "(?i)(?D)*.bak", "(?d)*", "(?d)!x"})
+	for _, want := range []string{"*.log", "*.tmp", "(?i)*.bak"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("%q missing from %q", want, got)
+		}
+	}
+	for _, p := range got {
+		if hasDeletePrefix(p) || p == "*" || p == "!x" {
+			t.Errorf("unexpected %q in %q", p, got)
+		}
 	}
 }

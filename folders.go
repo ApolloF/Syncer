@@ -118,6 +118,9 @@ func (a *App) Folders() ([]FolderView, error) {
 					if _, _, ok := accounts.ParseFolderID(f.ID); ok && accounts.InVault(f.Path) {
 						continue // another account's saves, waiting in the vault (see Accounts)
 					}
+					if hiddenFolder(s, f.ID) {
+						continue
+					}
 					v := a.syncedView(ctx, c, f, s, installed)
 					if g, acc, ok := accounts.ParseFolderID(f.ID); ok {
 						v.Split, v.Account, v.Game = true, acc, g
@@ -137,6 +140,9 @@ func (a *App) Folders() ([]FolderView, error) {
 		return nil, err
 	}
 	for _, lf := range s.BackupOnly {
+		if hiddenFolder(s, lf.ID) {
+			continue
+		}
 		v := FolderView{ID: lf.ID, Label: lf.Label, Path: lf.Path, State: "backup-only", Backup: !s.NoBackup[lf.ID], Installed: true}
 		if !v.Backup {
 			v.State = "off" // kept in the list, neither synced nor backed up

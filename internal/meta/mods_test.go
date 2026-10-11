@@ -1,3 +1,5 @@
+//go:build personal
+
 package meta
 
 import (

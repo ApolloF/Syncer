@@ -8,13 +8,14 @@
   import Icon from '../lib/Icon.svelte'
   import Toggle from '../lib/Toggle.svelte'
   import { ui, attempt, refresh, toast } from '../lib/state.svelte'
-  import { ago, bytes } from '../lib/fmt'
-  import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
+  import { ago, bytes, choices } from '../lib/fmt'
+  import { backupPlace, folderBackupStatus, googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
+  import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, UseDriveApp, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
   import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import type { store } from '../../wailsjs/go/models'
 
   const o = $derived(ui.overview)
-  const google = $derived(o?.settings.backupBackend === 'google')
+  const google = $derived(googleBackendOn(o))
   let signingIn = $state(false)
 
   async function signIn() {
@@ -61,18 +62,13 @@
   }
 
   const pct = $derived(live.prog && live.prog.folders ? (live.prog.folderIdx / live.prog.folders) * 100 : 0)
-  const driveLabel = $derived.by(() => {
-    if (!o) return ''
-    if (o.settings.backupRoot) return 'Custom folder'
-    if (!o.drive.found) return o.settings.driveRoot ? 'Chosen drive not found' : 'Not found'
-    return o.drive.running ? 'Connected' : 'Installed, not running'
-  })
+  const folderStatus = $derived(folderBackupStatus(o))
 </script>
 
 <header class="row">
   <div class="grow">
     <h1>Backup</h1>
-    <p class="muted">A copy of every save in your Google Drive, with 30 days of history.</p>
+    <p class="muted">{backupPlace(o) ? `A copy of every save in ${backupPlace(o)}, with 30 days of history.` : 'Choose a backup folder to keep a copy of every save.'}</p>
   </div>
   {#if o?.gaming && o.settings.pauseWhileGaming && !o.backingUp}
     <span class="pill accent">Paused while you play</span>
@@ -115,8 +111,11 @@
         <button class="btn ghost sm" onclick={signOut}>Sign out</button>
       </div>
     {:else}
+      {#if googleRetired(o)}
+        <p class="small">{googleRetiredNotice}</p>
+      {/if}
       <div class="line"><span class="muted">Status</span>
-        <span class="pill {o?.settings.backupRoot || o?.drive.running ? 'ok' : o?.drive.found ? 'warn' : 'err'}">{driveLabel}</span></div>
+        <span class="pill {folderStatus.kind}">{folderStatus.text}</span></div>
       {#if !o?.settings.backupRoot && ((o?.drive.drives?.length ?? 0) > 1 || o?.settings.driveRoot)}
         <div class="line"><span class="muted">Account</span>
           <select value={o?.settings.driveRoot ?? ''} onchange={(e) => save({ driveRoot: e.currentTarget.value })}>
@@ -140,8 +139,11 @@
         {#if o?.settings.backupRoot}
           <button class="btn ghost sm" onclick={() => save({ backupRoot: '' })}>Use Google Drive</button>
         {/if}
+        {#if googleRetired(o) && o?.drive.found}
+          <button class="btn primary sm" onclick={async () => { await attempt(UseDriveApp); refresh() }}>Use Google Drive for desktop</button>
+        {/if}
       </div>
-      {#if o?.google.available && !o.settings.backupRoot}
+      {#if o && googleSignInOffered(o) && !o.settings.backupRoot}
         <p class="faint small">{o.drive.found ? 'Or let Syncer sign in to Google itself, without Google Drive for desktop.' : "No Google Drive app? Syncer can sign in to Google itself."}</p>
         <div class="row btns">
           <button class="btn sm {o.drive.found ? '' : 'primary'}" disabled={signingIn} onclick={signIn}>
@@ -190,13 +192,13 @@
   <div class="item">
     <div class="grow"><div class="name">Every</div></div>
     <select value={o?.settings.intervalHours} onchange={(e) => save({ intervalHours: +e.currentTarget.value })}>
-      {#each [1, 3, 6, 12, 24] as h}<option value={h}>{h === 24 ? 'day' : `${h} hour${h > 1 ? 's' : ''}`}</option>{/each}
+      {#each choices([1, 3, 6, 12, 24], o?.settings.intervalHours) as h}<option value={h}>{h === 24 ? 'day' : `${h} hour${h > 1 ? 's' : ''}`}</option>{/each}
     </select>
   </div>
   <div class="item">
-    <div class="grow"><div class="name">Keep old versions for</div><div class="faint small">Changed or deleted saves stay restorable this long. PCs backing up to the same Google Drive keep them as long as the longest setting among them.</div></div>
+    <div class="grow"><div class="name">Keep old versions for</div><div class="faint small">Changed or deleted saves stay restorable this long. PCs backing up to the same folder keep them as long as the longest setting among them.</div></div>
     <select value={o?.settings.keepDays} onchange={(e) => save({ keepDays: +e.currentTarget.value })}>
-      {#each [7, 14, 30, 90, 365] as d}<option value={d}>{d} days</option>{/each}
+      {#each choices([7, 14, 30, 90, 365], o?.settings.keepDays) as d}<option value={d}>{d} days</option>{/each}
     </select>
   </div>
   <div class="item">

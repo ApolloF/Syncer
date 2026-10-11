@@ -4,7 +4,8 @@
   import Modal from '../lib/Modal.svelte'
   import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
   import { bytes } from '../lib/fmt'
-  import { Devices, AddDevice, DismissDevice, RemoveDevice, CopyText, PasteText } from '../../wailsjs/go/main/App'
+  import { idSegments, selfName } from '../lib/devices'
+  import { Devices, AddDevice, DismissDevice, RemoveDevice, AcceptDevice, AllowJoin, IgnoreJoin, CopyText, PasteText } from '../../wailsjs/go/main/App'
   import type { main } from '../../wailsjs/go/models'
 
   // How a linked PC is reached (DeviceView.via).
@@ -16,6 +17,8 @@
   let linking = $state(false)
   let removeFor = $state<main.DeviceView | null>(null)
   let showQR = $state(false)
+  // A PC to check the ID of before it is linked (a request) or allowed (a PC that offered to join).
+  let confirmFor = $state<{ id: string; name: string; join: boolean } | null>(null)
 
   async function load() {
     try { v = await Devices() } catch (e) { if (ui.overview?.syncthing.running) fail(e) }
@@ -31,6 +34,22 @@
     linking = false
   }
 
+  async function confirmed() {
+    const c = confirmFor!
+    confirmFor = null
+    linking = true
+    const ok = c.join
+      ? await attempt(() => AllowJoin(c.id), `${c.name} can sync your saves now`)
+      : await attempt(() => AcceptDevice(c.id), 'Linked. Saves will start syncing in a moment.')
+    if (ok) { load(); refresh() }
+    linking = false
+  }
+
+  async function ignore(d: main.JoinView) {
+    await attempt(async () => IgnoreJoin(d.id))
+    load(); refresh()
+  }
+
   async function paste() {
     const t = (await PasteText())?.trim()
     if (t) id = t
@@ -41,8 +60,6 @@
     CopyText(v.myID)
     toast('ID copied', 'ok')
   }
-
-  const groups = $derived(v?.myID.split('-') ?? [])
 </script>
 
 <header>
@@ -57,11 +74,23 @@
     <div class="card request" transition:slide={{ duration: 160 }}>
       <div class="ic"><Icon name="devices" /></div>
       <div class="grow">
-        <h2>{p.name || 'A PC'} wants to link</h2>
+        <h2>{selfName(p.name)} wants to link</h2>
         <p class="mono faint ellipsis">{p.id}</p>
       </div>
       <button class="btn ghost" onclick={async () => { await attempt(() => DismissDevice(p.id)); load(); refresh() }}>Ignore</button>
-      <button class="btn primary" disabled={linking} onclick={() => link(p.id, p.name)}>Accept</button>
+      <button class="btn primary" disabled={linking} onclick={() => (confirmFor = { id: p.id, name: selfName(p.name), join: false })}>Review</button>
+    </div>
+  {/each}
+
+  {#each v?.requests ?? [] as d (d.id)}
+    <div class="card request" transition:slide={{ duration: 160 }}>
+      <div class="ic"><Icon name="devices" /></div>
+      <div class="grow">
+        <h2>{d.name} wants to join as one of your PCs</h2>
+        <p class="muted small">It is already connected to this PC and says it runs Syncer. Allow it only if it is your own PC running Syncer: it gets all your game saves.</p>
+      </div>
+      <button class="btn ghost" onclick={() => ignore(d)}>Ignore</button>
+      <button class="btn primary" onclick={() => (confirmFor = { id: d.id, name: d.name, join: true })}>Allow</button>
     </div>
   {/each}
 
@@ -73,7 +102,7 @@
       </div>
       <p class="muted small">Enter this ID on your other PC.</p>
       <button class="idbox selectable" onclick={copy} title="Copy">
-        {#each groups as g, i}<span>{g}</span>{#if i < groups.length - 1}<span class="sep">-</span>{/if}{/each}
+        {#each idSegments(v?.myID ?? '') as s}<span class="grp">{s.group}</span>{#if s.dash}<span class="sep">-</span><wbr />{/if}{/each}
       </button>
       <div class="row">
         <button class="btn" onclick={copy}><Icon name="copy" size={15} /> Copy ID</button>
@@ -86,8 +115,9 @@
       <ol class="muted small">
         <li>Install and open Syncer on the other PC.</li>
         <li>Paste its ID below — or paste this PC's ID over there.</li>
-        <li>Accept the request on the other PC. Done.</li>
+        <li>Choose Review on the other PC and check the ID matches. Done.</li>
       </ol>
+      <p class="faint small">If Windows asks whether Syncthing may use the network, choose Allow, or your other PCs can't reach this one.</p>
       <div class="field">
         <input type="text" class="mono" placeholder="XXXXXXX-XXXXXXX-…" bind:value={id} spellcheck="false" />
         <button class="btn icon" title="Paste" onclick={paste}><Icon name="paste" size={16} /></button>
@@ -102,6 +132,21 @@
     </div>
   </section>
 
+  {#if v?.ignored?.length}
+    <h2 class="section">Ignored</h2>
+    <div class="card flush list">
+      {#each v.ignored as d (d.id)}
+        <div class="item">
+          <div class="grow">
+            <div class="name">{d.name}</div>
+            <div class="faint small">Asked to join as one of your PCs. Syncer leaves it alone.</div>
+          </div>
+          <button class="btn" onclick={() => (confirmFor = { id: d.id, name: d.name, join: true })}>Allow</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if v?.devices?.length}
     <h2 class="section">Linked PCs</h2>
     <div class="card flush list">
@@ -111,7 +156,7 @@
           <div class="grow">
             <div class="name">{d.name || d.id.slice(0, 7)}</div>
             <div class="faint small ellipsis">
-              {#if d.connected}Online · {viaText[d.via] ?? 'connected'}{d.address ? ` · ${d.address.replace(/^[a-z]+:\/\//, '')}` : ''}{:else}Offline — syncs when both PCs are on; newer saves it backed up still come from Google Drive{/if}
+              {#if d.connected}Online · {viaText[d.via] ?? 'connected'}{d.address ? ` · ${d.address.replace(/^[a-z]+:\/\//, '')}` : ''}{:else}Offline — syncs when both PCs are on; newer saves it backed up still come from its backup{/if}
             </div>
           </div>
           {#if d.versionGap === 'older'}<span class="pill warn" title="This PC runs Syncer {ui.overview?.version}. Open Syncer on {d.name || 'that PC'} and update it under Settings, or leave it in the tray and it updates by itself.">Needs update{d.version ? ` · ${d.version}` : ''}</span>
@@ -130,8 +175,28 @@
 {#if showQR && v}
   <Modal title="This PC's ID" onclose={() => (showQR = false)}>
     <img class="qr" src={v.qr} alt="QR code of device ID" />
-    <p class="mono center selectable">{v.myID}</p>
+    <p class="idbox center selectable">
+      {#each idSegments(v.myID) as s}<span class="grp">{s.group}</span>{#if s.dash}<span class="sep">-</span><wbr />{/if}{/each}
+    </p>
     {#snippet actions()}<button class="btn" onclick={() => (showQR = false)}>Close</button>{/snippet}
+  </Modal>
+{/if}
+
+{#if confirmFor}
+  <Modal title={confirmFor.join ? 'Allow this PC?' : 'Link this PC?'} onclose={() => (confirmFor = null)}>
+    <p>
+      {confirmFor.join ? 'A PC that is already connected to this one says it runs Syncer. If you allow it, it gets all your game saves.' : 'A PC asks to link with yours and get all your game saves.'}
+      The name it gives itself is <strong>{confirmFor.name}</strong>, but anyone can pick any name.
+    </p>
+    <p>Open Devices on your other PC and check that its ID is exactly this one:</p>
+    <p class="idbox selectable">
+      {#each idSegments(confirmFor.id) as s}<span class="grp">{s.group}</span>{#if s.dash}<span class="sep">-</span><wbr />{/if}{/each}
+    </p>
+    <p>If it differs, or you don't know this PC, choose Cancel.</p>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (confirmFor = null)}>Cancel</button>
+      <button class="btn primary" onclick={confirmed}>{confirmFor?.join ? 'The ID matches: allow' : 'The ID matches: link'}</button>
+    {/snippet}
   </Modal>
 {/if}
 
@@ -153,10 +218,11 @@
   .idbox {
     font-family: var(--mono); font-size: 13px; line-height: 1.7; text-align: left;
     padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--border);
-    background: var(--surface-2); color: var(--text); cursor: pointer; word-break: break-all;
+    background: var(--surface-2); color: var(--text); cursor: pointer;
     transition: border-color .15s;
   }
   .idbox:hover { border-color: var(--accent); }
+  .grp { white-space: nowrap; }
   .sep { color: var(--faint); }
   ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
   .field { display: flex; gap: 8px; }

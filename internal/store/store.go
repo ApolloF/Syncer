@@ -3,6 +3,8 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
 )
 
@@ -158,6 +161,8 @@ type State struct {
 	Update       *Update   `json:"update,omitempty"` // newest release seen
 	// Notified remembers which problems were already reported (key -> when).
 	Notified map[string]time.Time `json:"notified,omitempty"`
+	// NoticesDone are the one-time notices in Overview the user dismissed.
+	NoticesDone map[string]bool `json:"noticesDone,omitempty"`
 	// FolderBackups is when each folder (by id) was last backed up without errors.
 	FolderBackups map[string]time.Time `json:"folderBackups,omitempty"`
 	// BackgroundTask describes the background task as last registered, so it
@@ -189,6 +194,11 @@ type State struct {
 	// SyncerPCs are the linked devices known to run Syncer (by device id).
 	// Syncthing may be linked to other devices too, for other things.
 	SyncerPCs map[string]bool `json:"syncerPCs,omitempty"`
+	// JoinRequests are linked devices that offer Syncer's shared settings
+	// and wait for the user to allow them as one of their PCs; IgnoredPCs
+	// are those the user turned down.
+	JoinRequests map[string]bool `json:"joinRequests,omitempty"`
+	IgnoredPCs   map[string]bool `json:"ignoredPCs,omitempty"`
 	// SyncerFolders and OtherFolders are the Syncthing folders (by id)
 	// found to be Syncer's, or something else's (see meta.Reconcile).
 	SyncerFolders map[string]bool `json:"syncerFolders,omitempty"`
@@ -281,8 +291,19 @@ func defaults() Settings {
 
 // LoadSettings reads settings, falling back to defaults.
 func LoadSettings() Settings {
+	s, _ := loadSettings(false)
+	return s
+}
+
+// loadSettings is LoadSettings; locked says the caller holds the settings
+// lock. A file that can't be read is an error, and a caller about to save
+// must stop on it: defaults would replace the real settings.
+func loadSettings(locked bool) (Settings, error) {
 	s := defaults()
-	load("settings.json", &s)
+	err := loadFile("settings.json", &s, locked)
+	if err != nil && !locked {
+		lastGood(filepath.Join(paths.AppDir(), "settings.json"), &s)
+	}
 	if s.NoBackup == nil {
 		s.NoBackup = map[string]bool{}
 	}
@@ -319,7 +340,7 @@ func LoadSettings() Settings {
 	if s.AutoAddMaxGB == 0 || s.AutoAddMaxGB < -1 {
 		s.AutoAddMaxGB = 1
 	}
-	return s
+	return s, err
 }
 
 // SaveSettings writes settings atomically.
@@ -330,16 +351,29 @@ func UpdateSettings(fn func(*Settings)) (Settings, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	defer fileLock("settings")()
-	s := LoadSettings()
+	s, err := loadSettings(true)
+	if err != nil {
+		return s, err
+	}
 	fn(&s)
 	return s, save("settings.json", s)
 }
 
 // LoadState reads run state.
 func LoadState() State {
-	var st State
-	load("state.json", &st)
+	st, _ := loadState(false)
 	return st
+}
+
+// loadState is LoadState; locked says the caller holds the state lock. A file
+// that can't be read is an error (see loadSettings).
+func loadState(locked bool) (State, error) {
+	var st State
+	err := loadFile("state.json", &st, locked)
+	if err != nil && !locked {
+		lastGood(filepath.Join(paths.AppDir(), "state.json"), &st)
+	}
+	return st, err
 }
 
 // SaveState writes run state atomically.
@@ -347,14 +381,25 @@ func SaveState(st State) error { return save("state.json", st) }
 
 var stateMu sync.Mutex
 
-// UpdateState applies fn to the stored state under a lock and saves.
-func UpdateState(fn func(*State)) {
+// UpdateState applies fn to the stored state under a lock and saves. It
+// returns an error if the state couldn't be read or saved, so callers that
+// must not go on without the change (recording before pausing a folder) can
+// tell.
+func UpdateState(fn func(*State)) error {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	defer fileLock("state")()
-	st := LoadState()
+	st, err := loadState(true)
+	if err != nil {
+		logx.Printf("not updating state.json: %v", err)
+		return err
+	}
 	fn(&st)
-	_ = SaveState(st)
+	if err := SaveState(st); err != nil {
+		logx.Printf("saving state.json: %v", err)
+		return err
+	}
+	return nil
 }
 
 // FileLock takes the named cross-process lock (see fileLock).
@@ -384,15 +429,140 @@ func fileLock(name string) (unlock func()) {
 	}
 }
 
-func load(name string, v any) {
-	b, err := os.ReadFile(filepath.Join(paths.AppDir(), name))
-	if err == nil {
-		_ = json.Unmarshal(b, v)
+// loadFile fills v from the named file in the app dir; locked says the caller
+// holds the file's lock (see fileLock). A missing file leaves v as it is (a
+// first run). A file that can't be read for any other reason (the other Syncer
+// process is replacing it, a virus scanner holds it) also leaves v alone, and
+// no file is touched. Only a file that was read and is not valid JSON (an
+// empty one after a power cut, say) is set aside, never overwritten, and
+// replaced by the last good copy (name.bak). That recovery runs under the
+// lock and reads the file again first: another process may have done it
+// already, or be doing it now, which can show up as a missing file.
+func loadFile(name string, v any, locked bool) error {
+	p := filepath.Join(paths.AppDir(), name)
+	if b, err := readRetry(p); err == nil && json.Valid(b) {
+		decode(b, v)
+		remember(p, b)
+		return nil
+	} else if errors.Is(err, os.ErrNotExist) {
+		if _, berr := os.Stat(p + ".bak"); berr != nil {
+			return nil // a first run
+		}
+	} else if err != nil {
+		warnOnce(name, err)
+		return err
+	}
+	if !locked {
+		defer fileLock(strings.TrimSuffix(name, ".json"))()
+	}
+	b, err := readRetry(p)
+	switch {
+	case err == nil && json.Valid(b):
+		decode(b, v) // recovered by the other process meanwhile
+		remember(p, b)
+		return nil
+	case err == nil:
+		if !setAside(p, errors.New("not valid JSON")) {
+			// Never write over a file that is still there.
+			return fmt.Errorf("%s is damaged and could not be set aside", name)
+		}
+	case errors.Is(err, os.ErrNotExist):
+	default:
+		warnOnce(name, err)
+		return err
+	}
+	bak, berr := os.ReadFile(p + ".bak")
+	if berr == nil && json.Valid(bak) {
+		decode(bak, v)
+		remember(p, bak)
+		logx.Printf("%s: restored from %s.bak", name, name)
+		if werr := writeAtomic(p, bak); werr != nil {
+			logx.Printf("%s: writing the restored copy: %v", name, werr)
+		}
+		return nil
+	}
+	logx.Printf("%s: no usable backup copy (%v); starting from defaults", name, berr)
+	return nil
+}
+
+// good holds, per file path, what this process last read from it successfully.
+var good struct {
+	sync.Mutex
+	m map[string][]byte
+}
+
+func remember(path string, b []byte) {
+	good.Lock()
+	defer good.Unlock()
+	if good.m == nil {
+		good.m = map[string][]byte{}
+	}
+	good.m[path] = b
+}
+
+// lastGood fills v from the last good read of the file, if there was one: a
+// file that can't be read just now is better answered with what it held a
+// moment ago than with defaults. Without one, v keeps its defaults.
+func lastGood(path string, v any) {
+	good.Lock()
+	b := good.m[path]
+	good.Unlock()
+	if b != nil {
+		decode(b, v)
 	}
 }
 
+// readFile is os.ReadFile (tests make it fail).
+var readFile = os.ReadFile
+
+// readRetry is os.ReadFile, tried again for a moment when the file can't be
+// opened (but does exist): the other Syncer process or a scanner has it, or
+// is replacing it.
+func readRetry(p string) ([]byte, error) {
+	b, err := readFile(p)
+	for wait := 10 * time.Millisecond; err != nil && !errors.Is(err, os.ErrNotExist) && wait <= 160*time.Millisecond; wait *= 2 {
+		time.Sleep(wait)
+		b, err = readFile(p)
+	}
+	return b, err
+}
+
+// decode fills v from valid JSON. A field of another type than expected (a
+// newer Syncer changed it) is skipped; the rest is kept.
+func decode(b []byte, v any) { _ = json.Unmarshal(b, v) }
+
+var warned sync.Map // file name -> true once logged
+
+func warnOnce(name string, err error) {
+	if _, dup := warned.LoadOrStore(name, true); !dup {
+		logx.Printf("%s can't be read right now (%v); using defaults for now", name, err)
+	}
+}
+
+// setAside renames an unusable file to name.corrupt-<time>, so what is in it
+// stays available and a later save can't overwrite it. It reports whether
+// that worked.
+func setAside(p string, cause error) bool {
+	aside := p + ".corrupt-" + time.Now().Format("20060102-150405.000")
+	if err := renameRetry(p, aside); err != nil {
+		logx.Printf("%s is unusable (%v) and could not be set aside: %v", filepath.Base(p), cause, err)
+		return false
+	}
+	logx.Printf("%s is unusable (%v); kept as %s", filepath.Base(p), cause, filepath.Base(aside))
+	return true
+}
+
+// save writes the named file, first keeping the current one as name.bak if it
+// is good: a settings file lost to a crash or power cut can then be restored
+// by load.
 func save(name string, v any) error {
-	return WriteJSON(filepath.Join(paths.AppDir(), name), v)
+	p := filepath.Join(paths.AppDir(), name)
+	if old, err := os.ReadFile(p); err == nil && json.Valid(old) {
+		if err := writeAtomic(p+".bak", old); err != nil {
+			logx.Printf("%s: keeping a backup copy: %v", name, err)
+		}
+	}
+	return WriteJSON(p, v)
 }
 
 // WriteJSON writes v to path via a uniquely named temp file + rename, so
@@ -403,19 +573,47 @@ func WriteJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
+	return writeAtomic(path, b)
+}
+
+// writeAtomic is WriteJSON for bytes. The temp file is flushed to disk before
+// the rename: otherwise a power cut can leave the renamed file empty. The
+// folder isn't flushed too (Windows can't fsync a directory); NTFS journals
+// the rename itself.
+func writeAtomic(path string, b []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return err
 	}
 	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(f.Name(), path)
+		err = renameRetry(f.Name(), path)
 	}
 	if err != nil {
 		_ = os.Remove(f.Name())
+	}
+	return err
+}
+
+var rename = os.Rename
+
+// renameRetry is os.Rename, tried again a few times when it is refused with
+// access denied or a sharing violation: on Windows that is what replacing a
+// file another process has open (the other Syncer, a scanner) looks like, and
+// it passes within moments.
+func renameRetry(from, to string) error {
+	var err error
+	for i, wait := 0, 10*time.Millisecond; i < 6; i, wait = i+1, wait*2 {
+		if err = rename(from, to); err == nil || !(errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION)) {
+			return err
+		}
+		time.Sleep(wait)
 	}
 	return err
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -43,11 +44,61 @@ func withSyncIgnores(kind string, pats []string) []string {
 	out := append([]string(nil), syncIgnores...)
 	out = append(out, mods.Ignores(kind)...)
 	for _, p := range pats {
+		if hasDeletePrefix(p) {
+			// Saved by an older Syncer, which allowed it. The file stays
+			// excluded, just without the flag that lets Syncthing delete it.
+			plain := stripDeletePrefix(p)
+			if _, dup := skippedDelete.LoadOrStore(p, true); !dup {
+				logx.Printf("the exclusion %q is applied as %q: (?d) lets Syncthing delete files", p, plain)
+			}
+			if c, err := cleanExclusions([]string{plain}); err == nil && len(c) == 1 {
+				p = c[0]
+			} else {
+				continue
+			}
+		}
 		if !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, p) }) {
 			out = append(out, p)
 		}
 	}
 	return out
+}
+
+var skippedDelete sync.Map // exclusions already reported in the log
+
+// hasDeletePrefix reports whether p starts with Syncthing's (?d) flag, alone
+// or after (?i): matching files may then be deleted when they stand in the
+// way of removing a folder.
+func hasDeletePrefix(p string) bool {
+	for {
+		lower := strings.ToLower(p)
+		switch {
+		case strings.HasPrefix(lower, "(?d)"):
+			return true
+		case strings.HasPrefix(lower, "(?i)"):
+			p = p[len("(?i)"):]
+		default:
+			return false
+		}
+	}
+}
+
+// stripDeletePrefix removes (?d), in any case, from the flags at the start of
+// p and keeps the others, such as (?i).
+func stripDeletePrefix(p string) string {
+	var kept string
+	for {
+		lower := strings.ToLower(p)
+		switch {
+		case strings.HasPrefix(lower, "(?d)"):
+			p = p[len("(?d)"):]
+		case strings.HasPrefix(lower, "(?i)"):
+			kept += p[:len("(?i)")]
+			p = p[len("(?i)"):]
+		default:
+			return kept + p
+		}
+	}
 }
 
 // folderIgnores are all of Syncer's .stignore lines for the folder id at
@@ -81,10 +132,10 @@ func cleanExclusions(in []string) ([]string, error) {
 		if strings.HasPrefix(p, "#") || strings.HasPrefix(p, "!") || strings.HasPrefix(p, "//") {
 			return nil, fmt.Errorf("%q: patterns can't start with #, ! or //", p)
 		}
-		bare := p
-		for _, pre := range []string{"(?i)", "(?d)"} {
-			bare = strings.TrimPrefix(bare, pre)
+		if hasDeletePrefix(p) {
+			return nil, fmt.Errorf("%q: patterns can't start with (?d), as that lets Syncthing delete files", p)
 		}
+		bare := strings.TrimPrefix(p, "(?i)")
 		switch strings.Trim(bare, `/\`) {
 		case "", "*", "**":
 			return nil, fmt.Errorf("%q would skip every file", p)

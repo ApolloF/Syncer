@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,18 @@ func TestNewer(t *testing.T) {
 		{"v0.6.0", "v0.6.0", false},
 		{"v0.5.9", "v0.6.0", false},
 		{"v0.7.0-beta", "v0.6.0", true},
+		{"v1.1.0", "v1.1.0-rc1", true},
+		{"v1.1.0-rc1", "v1.1.0", false},
+		{"v1.1.0-rc2", "v1.1.0-rc1", true},
+		{"v1.1.0-rc10", "v1.1.0-rc9", false}, // text, as in semver
+		{"v1.1.0-rc.10", "v1.1.0-rc.9", true},
+		{"v1.1.0-rc", "v1.1.0-rc.1", false},
+		{"v1.1.0-1", "v1.1.0-rc", false},
+		{"v1.1.0-rc1", "v1.0.9", true},
+		{"v1.0.9", "v1.1.0-rc1", false},
+		{"v1.1.0-rc1", "v1.1.0-rc1", false},
+		{"v1.1.0+build5", "v1.1.0", false},
+		{"v1.1.0-", "v1.0.0", false},
 		{"v0.7.0", "dev", false},
 		{"dev", "v0.1.0", false},
 		{"v1.2.3.4", "v1.0.0", false},
@@ -56,8 +69,8 @@ func TestLatestAndDownload(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	defer func(l, d string) { latestURL, downloadURL = l, d }(latestURL, downloadURL)
-	latestURL, downloadURL = srv.URL+"/latest", srv.URL+"/download/"
+	defer func(l, d string, p bool) { latestURL, downloadURL, personal = l, d, p }(latestURL, downloadURL, personal)
+	latestURL, downloadURL, personal = srv.URL+"/latest", srv.URL+"/download/", false
 
 	r, err := Latest(context.Background())
 	if err != nil {
@@ -147,6 +160,8 @@ func TestReplaceAndCleanup(t *testing.T) {
 	write("Syncer.exe", "old")
 	write(oldName, "older")
 	write(newName, "new")
+	defer func(p bool) { personal = p }(personal)
+	personal = false
 	if err := Replace(exe, filepath.Join(dir, newName)); err != nil {
 		t.Fatal(err)
 	}
@@ -160,5 +175,40 @@ func TestReplaceAndCleanup(t *testing.T) {
 	es, _ := os.ReadDir(dir)
 	if len(es) != 1 || es[0].Name() != "Syncer.exe" {
 		t.Fatalf("left after cleanup: %v", es)
+	}
+}
+
+func TestPersonalBuildNeverInstalls(t *testing.T) {
+	defer func(p bool) { personal = p }(personal)
+	personal = true
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "Syncer.exe")
+	if err := os.WriteFile(exe, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Download(context.Background(), &Asset{URL: downloadURL + "v9.9.9/Syncer.exe", Size: 1}, dir); !errors.Is(err, ErrPersonalBuild) {
+		t.Errorf("Download err = %v, want ErrPersonalBuild", err)
+	}
+	if err := Replace(exe, filepath.Join(dir, newName)); !errors.Is(err, ErrPersonalBuild) {
+		t.Errorf("Replace err = %v, want ErrPersonalBuild", err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "mine" {
+		t.Errorf("exe = %q, changed", b)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("files left in the folder: %v", entries)
+	}
+}
+
+func TestLatestSkipsDraftsAndPrereleases(t *testing.T) {
+	for _, flag := range []string{"draft", "prerelease"} {
+		body := fmt.Sprintf(`{"tag_name":"v2.0.0-rc1",%q:true,"assets":[]}`, flag)
+		if _, err := decodeRelease(strings.NewReader(body)); err == nil {
+			t.Errorf("a %s was accepted as the latest release", flag)
+		}
+	}
+	r, err := decodeRelease(strings.NewReader(`{"tag_name":"v2.0.0","draft":false,"prerelease":false,"assets":[]}`))
+	if err != nil || r.Tag != "v2.0.0" {
+		t.Fatalf("decodeRelease = %+v, %v", r, err)
 	}
 }

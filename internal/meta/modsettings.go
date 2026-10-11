@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
@@ -70,6 +71,9 @@ func NewModStamp() time.Time {
 // adoptModSettings takes over the newest mod options another PC published,
 // when they are newer than this PC's.
 func adoptModSettings(ctx context.Context, c *syncthing.Client, me string) {
+	if !features.Mods {
+		return // mod options a personal PC published don't apply here
+	}
 	s := store.LoadSettings()
 	best, from := ModSettingsOf(s), ""
 	for _, df := range readOtherFiles(me) {
@@ -94,6 +98,9 @@ func adoptModSettings(ctx context.Context, c *syncthing.Client, me string) {
 // ModSettingsDiffer names the other PCs whose mod options differ from this
 // PC's (only PCs whose Syncer shares them).
 func ModSettingsDiffer(me string) []string {
+	if !features.Mods {
+		return nil
+	}
 	mine := ModSettingsOf(store.LoadSettings())
 	var out []string
 	for _, df := range readOtherFiles(me) {

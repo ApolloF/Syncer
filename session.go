@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/ApolloF/syncer/internal/backup"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/mods"
@@ -174,7 +176,7 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 			// A mod folder waits while its mod manager is open (see
 			// modsTick), and a PC receiving deployed mods keeps its folder
 			// paused.
-			if isMod(s, id) && (!holdable(s, id) || mods.ManagerRunning(processPaths())) {
+			if isMod(s, id) && (!features.Mods || !holdable(s, id) || mods.ManagerRunning(processPaths())) {
 				if holdable(s, id) {
 					modHeld = append(modHeld, id)
 				}
@@ -205,30 +207,41 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 	for _, id := range store.LoadState().PausedFolders {
 		userPaused[id] = true
 	}
-	var now []string
+	var now, toPause []string
 	var errs []error
 	for _, f := range fs {
 		if f.ID == meta.FolderID || (f.Paused && !userPaused[f.ID]) {
 			continue // paused by hand: not Syncer's to resume
 		}
-		if f.Paused {
-			now = append(now, f.ID)
-			continue
-		}
-		if err := c.PatchFolder(ctx, f.ID, map[string]any{"paused": true}); err != nil {
-			errs = append(errs, err)
-			continue
-		}
 		now = append(now, f.ID)
+		if !f.Paused {
+			toPause = append(toPause, f.ID)
+		}
 	}
-	store.UpdateState(func(st *store.State) {
+	// Remembered before pausing, so a crash in between can't leave a folder
+	// paused that nothing will ever resume.
+	if err := store.UpdateState(func(st *store.State) {
 		for _, id := range now {
 			if !slices.Contains(st.GamePaused, id) {
 				st.GamePaused = append(st.GamePaused, id)
 			}
 		}
 		st.GameHeld = time.Now()
-	})
+	}); err != nil {
+		return fmt.Errorf("not pausing folders that couldn't be remembered: %w", err)
+	}
+	var failed []string
+	for _, id := range toPause {
+		if err := c.PatchFolder(ctx, id, map[string]any{"paused": true}); err != nil {
+			errs = append(errs, err)
+			failed = append(failed, id)
+		}
+	}
+	if gone := notPaused(ctx, c, failed); len(gone) > 0 {
+		store.UpdateState(func(st *store.State) {
+			st.GamePaused = slices.DeleteFunc(st.GamePaused, func(id string) bool { return slices.Contains(gone, id) })
+		})
+	}
 	return errors.Join(errs...)
 }
 
