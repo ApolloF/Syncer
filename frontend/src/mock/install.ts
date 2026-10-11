@@ -69,6 +69,12 @@ export function installMock() {
     } satisfies Plain<main.FolderView>),
   )
 
+  // The public screenshots use made-up games, not real titles.
+  if (pub) {
+    const madeUp: [string, string][] = [['Ember Crown','Saved Games\\Ember Crown'],['Frostline','AppData\\Local\\Frostline\\Saved'],['Grimwald','Documents\\My Games\\Grimwald'],['Hollow Tide','AppData\\Roaming\\HollowTide'],['Iron Veil','Saved Games\\Iron Veil'],['Lumen Drift','AppData\\LocalLow\\Driftworks\\Lumen Drift'],['Neon Meridian','Documents\\Neon Meridian\\Profiles'],['Quiet Harbor','AppData\\Local\\QuietHarbor\\Saves'],['Sable Run','Documents\\Sable Run'],['Starfall Protocol','AppData\\Local\\Starfall\\Saved\\SaveGames'],['Tidewatch','AppData\\Roaming\\Tidewatch\\Saves'],['Wren Hollow','Documents\\Wren Hollow\\Saves']]
+    folders.forEach((f, i) => Object.assign(f, { label: madeUp[i][0], game: madeUp[i][0], path: `${home}\\${madeUp[i][1]}` }))
+  }
+
   // ---- accounts: Alex plays here, Sam on the laptop, Mia in the living room ----
   const alex = 'q4alxe', sam = 'p7samd', mia = 'r2miaz'
   const people: accounts.Account[] = [
