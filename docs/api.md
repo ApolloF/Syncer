@@ -1,5 +1,7 @@
 # Syncer launcher API
 
+> **Personal builds only.** The launcher API is compiled only into the maintainer's personal build (`wails build -tags personal`). It isn't part of the public release (v1.0.0 and later) and there the named pipe isn't opened and `--api` exits at once. It may come back as an add-on.
+
 A local API for game launchers (such as [Seaglass](https://github.com/ApolloF/Seaglass)): show a game's save status, sync saves before a game starts, back them up after it exits, and deal with conflicts.
 
 ## Connecting
