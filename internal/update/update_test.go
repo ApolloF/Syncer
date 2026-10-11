@@ -28,6 +28,18 @@ func TestNewer(t *testing.T) {
 		{"v0.6.0", "v0.6.0", false},
 		{"v0.5.9", "v0.6.0", false},
 		{"v0.7.0-beta", "v0.6.0", true},
+		{"v1.1.0", "v1.1.0-rc1", true},
+		{"v1.1.0-rc1", "v1.1.0", false},
+		{"v1.1.0-rc2", "v1.1.0-rc1", true},
+		{"v1.1.0-rc10", "v1.1.0-rc9", false}, // text, as in semver
+		{"v1.1.0-rc.10", "v1.1.0-rc.9", true},
+		{"v1.1.0-rc", "v1.1.0-rc.1", false},
+		{"v1.1.0-1", "v1.1.0-rc", false},
+		{"v1.1.0-rc1", "v1.0.9", true},
+		{"v1.0.9", "v1.1.0-rc1", false},
+		{"v1.1.0-rc1", "v1.1.0-rc1", false},
+		{"v1.1.0+build5", "v1.1.0", false},
+		{"v1.1.0-", "v1.0.0", false},
 		{"v0.7.0", "dev", false},
 		{"dev", "v0.1.0", false},
 		{"v1.2.3.4", "v1.0.0", false},
@@ -185,5 +197,18 @@ func TestPersonalBuildNeverInstalls(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Errorf("files left in the folder: %v", entries)
+	}
+}
+
+func TestLatestSkipsDraftsAndPrereleases(t *testing.T) {
+	for _, flag := range []string{"draft", "prerelease"} {
+		body := fmt.Sprintf(`{"tag_name":"v2.0.0-rc1",%q:true,"assets":[]}`, flag)
+		if _, err := decodeRelease(strings.NewReader(body)); err == nil {
+			t.Errorf("a %s was accepted as the latest release", flag)
+		}
+	}
+	r, err := decodeRelease(strings.NewReader(`{"tag_name":"v2.0.0","draft":false,"prerelease":false,"assets":[]}`))
+	if err != nil || r.Tag != "v2.0.0" {
+		t.Fatalf("decodeRelease = %+v, %v", r, err)
 	}
 }

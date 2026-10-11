@@ -31,6 +31,8 @@ const (
 
 // Variables for tests.
 var (
+	// latestURL is GitHub's "latest release", which is never a draft or a
+	// pre-release, and drafts aren't visible without a token anyway.
 	latestURL = "https://api.github.com/repos/ApolloF/syncer/releases/latest"
 	// downloadURL is the only place the new exe may come from.
 	downloadURL = ReleasesURL + "download/"
@@ -120,6 +122,8 @@ func decodeRelease(body io.Reader) (Release, error) {
 	var r struct {
 		Tag     string `json:"tag_name"`
 		HTMLURL string `json:"html_url"`
+		Draft   bool   `json:"draft"`
+		Pre     bool   `json:"prerelease"`
 		Assets  []struct {
 			Name   string `json:"name"`
 			URL    string `json:"browser_download_url"`
@@ -129,6 +133,9 @@ func decodeRelease(body io.Reader) (Release, error) {
 	}
 	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&r); err != nil {
 		return Release{}, err
+	}
+	if r.Draft || r.Pre {
+		return Release{}, errors.New("GitHub's latest release is a draft or pre-release")
 	}
 	if _, ok := parse(r.Tag); !ok {
 		return Release{}, errors.New("unexpected release tag " + strconv.Quote(r.Tag))
@@ -248,19 +255,16 @@ func Cleanup(exe string) {
 }
 
 // Newer reports whether version tag a is newer than b ("v1.2.3", "1.2").
-// Anything that isn't a version (like "dev") is never newer nor older.
+// A pre-release ("v1.2.0-rc1") is older than its release ("v1.2.0"), as in
+// semantic versioning. Anything that isn't a version (like "dev") is never
+// newer nor older.
 func Newer(a, b string) bool {
 	va, oka := parse(a)
 	vb, okb := parse(b)
 	if !oka || !okb {
 		return false
 	}
-	for i := range va {
-		if va[i] != vb[i] {
-			return va[i] > vb[i]
-		}
-	}
-	return false
+	return compare(va, vb) > 0
 }
 
 // Valid reports whether v is a release version (not e.g. "dev").
@@ -269,22 +273,86 @@ func Valid(v string) bool {
 	return ok
 }
 
-func parse(v string) ([3]int, bool) {
-	var out [3]int
+type version struct {
+	nums [3]int
+	pre  []string // dot-separated pre-release identifiers; none for a release
+}
+
+func parse(v string) (version, bool) {
+	var out version
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if i := strings.IndexAny(v, "-+"); i >= 0 {
-		v = v[:i] // pre-release/build suffix
+	if i := strings.Index(v, "+"); i >= 0 {
+		v = v[:i] // build metadata
+	}
+	if i := strings.Index(v, "-"); i >= 0 {
+		pre := v[i+1:]
+		v = v[:i]
+		out.pre = strings.Split(pre, ".")
+		for _, id := range out.pre {
+			if id == "" || strings.Trim(id, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-") != "" {
+				return version{}, false
+			}
+		}
 	}
 	parts := strings.Split(v, ".")
 	if v == "" || len(parts) > 3 {
-		return out, false
+		return version{}, false
 	}
 	for i, p := range parts {
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 0 {
-			return out, false
+			return version{}, false
 		}
-		out[i] = n
+		out.nums[i] = n
 	}
 	return out, true
+}
+
+// compare returns -1, 0 or 1 as a is older than, the same as or newer than b.
+func compare(a, b version) int {
+	for i := range a.nums {
+		if a.nums[i] != b.nums[i] {
+			return cmpInt(a.nums[i], b.nums[i])
+		}
+	}
+	switch {
+	case a.pre == nil && b.pre == nil:
+		return 0
+	case a.pre == nil:
+		return 1 // a release is newer than its pre-releases
+	case b.pre == nil:
+		return -1
+	}
+	for i := 0; i < len(a.pre) && i < len(b.pre); i++ {
+		if c := compareIdent(a.pre[i], b.pre[i]); c != 0 {
+			return c
+		}
+	}
+	return cmpInt(len(a.pre), len(b.pre))
+}
+
+// compareIdent orders pre-release identifiers: numbers numerically, before
+// words, which compare as text.
+func compareIdent(a, b string) int {
+	na, erra := strconv.Atoi(a)
+	nb, errb := strconv.Atoi(b)
+	switch {
+	case erra == nil && errb == nil:
+		return cmpInt(na, nb)
+	case erra == nil:
+		return -1
+	case errb == nil:
+		return 1
+	}
+	return strings.Compare(a, b)
+}
+
+func cmpInt(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
 }
