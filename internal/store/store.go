@@ -4,6 +4,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -289,12 +290,20 @@ func defaults() Settings {
 }
 
 // LoadSettings reads settings, falling back to defaults.
-func LoadSettings() Settings { return loadSettings(false) }
+func LoadSettings() Settings {
+	s, _ := loadSettings(false)
+	return s
+}
 
-// loadSettings is LoadSettings; locked says the caller holds the settings lock.
-func loadSettings(locked bool) Settings {
+// loadSettings is LoadSettings; locked says the caller holds the settings
+// lock. A file that can't be read is an error, and a caller about to save
+// must stop on it: defaults would replace the real settings.
+func loadSettings(locked bool) (Settings, error) {
 	s := defaults()
-	loadFile("settings.json", &s, locked)
+	err := loadFile("settings.json", &s, locked)
+	if err != nil && !locked {
+		lastGood(filepath.Join(paths.AppDir(), "settings.json"), &s)
+	}
 	if s.NoBackup == nil {
 		s.NoBackup = map[string]bool{}
 	}
@@ -331,7 +340,7 @@ func loadSettings(locked bool) Settings {
 	if s.AutoAddMaxGB == 0 || s.AutoAddMaxGB < -1 {
 		s.AutoAddMaxGB = 1
 	}
-	return s
+	return s, err
 }
 
 // SaveSettings writes settings atomically.
@@ -342,19 +351,29 @@ func UpdateSettings(fn func(*Settings)) (Settings, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	defer fileLock("settings")()
-	s := loadSettings(true)
+	s, err := loadSettings(true)
+	if err != nil {
+		return s, err
+	}
 	fn(&s)
 	return s, save("settings.json", s)
 }
 
 // LoadState reads run state.
-func LoadState() State { return loadState(false) }
-
-// loadState is LoadState; locked says the caller holds the state lock.
-func loadState(locked bool) State {
-	var st State
-	loadFile("state.json", &st, locked)
+func LoadState() State {
+	st, _ := loadState(false)
 	return st
+}
+
+// loadState is LoadState; locked says the caller holds the state lock. A file
+// that can't be read is an error (see loadSettings).
+func loadState(locked bool) (State, error) {
+	var st State
+	err := loadFile("state.json", &st, locked)
+	if err != nil && !locked {
+		lastGood(filepath.Join(paths.AppDir(), "state.json"), &st)
+	}
+	return st, err
 }
 
 // SaveState writes run state atomically.
@@ -367,7 +386,11 @@ func UpdateState(fn func(*State)) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	defer fileLock("state")()
-	st := loadState(true)
+	st, err := loadState(true)
+	if err != nil {
+		logx.Printf("not updating state.json: %v", err)
+		return
+	}
 	fn(&st)
 	if err := SaveState(st); err != nil {
 		logx.Printf("saving state.json: %v", err)
@@ -410,18 +433,19 @@ func fileLock(name string) (unlock func()) {
 // replaced by the last good copy (name.bak). That recovery runs under the
 // lock and reads the file again first: another process may have done it
 // already, or be doing it now, which can show up as a missing file.
-func loadFile(name string, v any, locked bool) {
+func loadFile(name string, v any, locked bool) error {
 	p := filepath.Join(paths.AppDir(), name)
 	if b, err := readRetry(p); err == nil && json.Valid(b) {
 		decode(b, v)
-		return
+		remember(p, b)
+		return nil
 	} else if errors.Is(err, os.ErrNotExist) {
 		if _, berr := os.Stat(p + ".bak"); berr != nil {
-			return // a first run
+			return nil // a first run
 		}
 	} else if err != nil {
 		warnOnce(name, err)
-		return
+		return err
 	}
 	if !locked {
 		defer fileLock(strings.TrimSuffix(name, ".json"))()
@@ -430,36 +454,70 @@ func loadFile(name string, v any, locked bool) {
 	switch {
 	case err == nil && json.Valid(b):
 		decode(b, v) // recovered by the other process meanwhile
-		return
+		remember(p, b)
+		return nil
 	case err == nil:
 		if !setAside(p, errors.New("not valid JSON")) {
-			return // never write over a file that is still there
+			// Never write over a file that is still there.
+			return fmt.Errorf("%s is damaged and could not be set aside", name)
 		}
 	case errors.Is(err, os.ErrNotExist):
 	default:
 		warnOnce(name, err)
-		return
+		return err
 	}
 	bak, berr := os.ReadFile(p + ".bak")
 	if berr == nil && json.Valid(bak) {
 		decode(bak, v)
+		remember(p, bak)
 		logx.Printf("%s: restored from %s.bak", name, name)
 		if werr := writeAtomic(p, bak); werr != nil {
 			logx.Printf("%s: writing the restored copy: %v", name, werr)
 		}
-		return
+		return nil
 	}
 	logx.Printf("%s: no usable backup copy (%v); starting from defaults", name, berr)
+	return nil
 }
+
+// good holds, per file path, what this process last read from it successfully.
+var good struct {
+	sync.Mutex
+	m map[string][]byte
+}
+
+func remember(path string, b []byte) {
+	good.Lock()
+	defer good.Unlock()
+	if good.m == nil {
+		good.m = map[string][]byte{}
+	}
+	good.m[path] = b
+}
+
+// lastGood fills v from the last good read of the file, if there was one: a
+// file that can't be read just now is better answered with what it held a
+// moment ago than with defaults. Without one, v keeps its defaults.
+func lastGood(path string, v any) {
+	good.Lock()
+	b := good.m[path]
+	good.Unlock()
+	if b != nil {
+		decode(b, v)
+	}
+}
+
+// readFile is os.ReadFile (tests make it fail).
+var readFile = os.ReadFile
 
 // readRetry is os.ReadFile, tried again for a moment when the file can't be
 // opened (but does exist): the other Syncer process or a scanner has it, or
 // is replacing it.
 func readRetry(p string) ([]byte, error) {
-	b, err := os.ReadFile(p)
+	b, err := readFile(p)
 	for wait := 10 * time.Millisecond; err != nil && !errors.Is(err, os.ErrNotExist) && wait <= 160*time.Millisecond; wait *= 2 {
 		time.Sleep(wait)
-		b, err = os.ReadFile(p)
+		b, err = readFile(p)
 	}
 	return b, err
 }

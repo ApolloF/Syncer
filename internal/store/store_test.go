@@ -252,3 +252,78 @@ func TestRenameRetriesWhenAnotherProcessHoldsTheFile(t *testing.T) {
 		t.Fatalf("err=%v after %d renames", err, calls)
 	}
 }
+
+// failReads makes reading the settings or state file fail, as when another
+// process holds it, until the returned func is called.
+func failReads(t *testing.T) (restore func()) {
+	t.Helper()
+	old := readFile
+	readFile = func(p string) ([]byte, error) {
+		if strings.HasSuffix(p, "settings.json") || strings.HasSuffix(p, "state.json") {
+			return nil, &os.PathError{Op: "open", Path: p, Err: windows.ERROR_SHARING_VIOLATION}
+		}
+		return old(p)
+	}
+	return func() { readFile = old }
+}
+
+func TestUpdateSettingsDoesNotSaveWhenTheFileCantBeRead(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if err := SaveSettings(Settings{Theme: "dark", KeepDays: 7}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(settingsFile())
+	restore := failReads(t)
+	_, err := UpdateSettings(func(s *Settings) { s.KeepDays = 1 })
+	restore()
+	if err == nil {
+		t.Fatal("want the read error")
+	}
+	if after, _ := os.ReadFile(settingsFile()); string(after) != string(before) {
+		t.Errorf("settings.json changed: %q", after)
+	}
+	if _, err := os.Stat(settingsFile() + ".bak"); err == nil {
+		t.Error("a .bak was written for a save that never happened")
+	}
+}
+
+func TestUpdateStateDoesNotSaveWhenTheFileCantBeRead(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	UpdateState(func(s *State) { s.PausedFolders = []string{"a"} })
+	statePath := filepath.Join(paths.AppDir(), "state.json")
+	before, _ := os.ReadFile(statePath)
+	restore := failReads(t)
+	UpdateState(func(s *State) { s.PausedFolders = nil })
+	restore()
+	if after, _ := os.ReadFile(statePath); string(after) != string(before) {
+		t.Errorf("state.json changed: %q", after)
+	}
+	if got := LoadState().PausedFolders; len(got) != 1 {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestLoadAnswersWithLastGoodValueWhenReadFails(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if err := SaveSettings(Settings{Theme: "dark", KeepDays: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if s := LoadSettings(); s.KeepDays != 7 { // a good read to remember
+		t.Fatalf("got %+v", s)
+	}
+	defer failReads(t)()
+	if s := LoadSettings(); s.Theme != "dark" || s.KeepDays != 7 {
+		t.Errorf("want the last good settings, got %+v", s)
+	}
+}
+
+func TestLoadFallsBackToDefaultsWhenNothingWasEverRead(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if err := SaveSettings(Settings{Theme: "dark", KeepDays: 7}); err != nil {
+		t.Fatal(err)
+	}
+	defer failReads(t)()
+	if s := LoadSettings(); s.Theme != "system" || s.KeepDays != 30 {
+		t.Errorf("want defaults, got %+v", s)
+	}
+}
