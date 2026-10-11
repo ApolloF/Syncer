@@ -17,19 +17,23 @@ import (
 func trustFake(t *testing.T) (*fakeSyncthing, *syncthing.Client) {
 	t.Helper()
 	offer := map[string]any{"offeredBy": map[string]any{}}
-	for _, d := range []string{"FRIEND", "INTRODUCED", "IGNORED"} {
+	for _, d := range []string{"FRIEND", "FRIEND2", "IGNORED"} {
 		offer["offeredBy"].(map[string]any)[d] = map[string]any{}
 	}
 	fake := &fakeSyncthing{
 		devices: map[string]syncthing.Device{
 			"ME": {DeviceID: "ME"}, "LAPTOP": {DeviceID: "LAPTOP"}, "FRIEND": {DeviceID: "FRIEND"},
-			"INTRODUCED": {DeviceID: "INTRODUCED", IntroducedBy: "LAPTOP"}, "IGNORED": {DeviceID: "IGNORED"},
-			"UPGRADED": {DeviceID: "UPGRADED"},
+			// A friend's PC LAPTOP knows through a notes folder, not a Syncer PC.
+			"FRIEND2": {DeviceID: "FRIEND2", IntroducedBy: "LAPTOP"}, "IGNORED": {DeviceID: "IGNORED"},
+			// Syncer shared the settings with these: one from an older Syncer,
+			// one a trusted PC introduced through the settings folder.
+			"UPGRADED": {DeviceID: "UPGRADED"}, "THIRD": {DeviceID: "THIRD", IntroducedBy: "LAPTOP"},
 		},
 		folders: map[string]syncthing.Folder{
+			FolderID: {ID: FolderID, Path: Dir(), Devices: devs("ME", "LAPTOP", "UPGRADED", "THIRD")},
 			"game": {ID: "game", Label: "Game", Path: filepath.Join(t.TempDir(), "Game"), Devices: devs("ME", "LAPTOP")},
 		},
-		remote:  map[string]string{FolderID + "/UPGRADED": syncthing.RemoteValid},
+		remote:  map[string]string{FolderID + "/UPGRADED": syncthing.RemoteValid, FolderID + "/THIRD": syncthing.RemoteValid},
 		pending: map[string]any{FolderID: offer},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(fake.serve))
@@ -63,23 +67,23 @@ func TestPairedDeviceOfferingTheSharedSettingsOnlyAsks(t *testing.T) {
 	}
 
 	st := store.LoadState()
-	for _, id := range []string{"LAPTOP", "INTRODUCED", "UPGRADED"} {
+	for _, id := range []string{"LAPTOP", "THIRD", "UPGRADED"} {
 		if !st.SyncerPCs[id] {
 			t.Errorf("%s should be trusted: %v", id, st.SyncerPCs)
 		}
 	}
-	for _, id := range []string{"FRIEND", "IGNORED"} {
+	for _, id := range []string{"FRIEND", "FRIEND2", "IGNORED"} {
 		if st.SyncerPCs[id] {
 			t.Errorf("%s was trusted without being allowed", id)
 		}
 	}
 	waiting, ignored := JoinRequests()
-	if !slices.Equal(waiting, []string{"FRIEND"}) || !slices.Equal(ignored, []string{"IGNORED"}) {
+	if !slices.Equal(waiting, []string{"FRIEND", "FRIEND2"}) || !slices.Equal(ignored, []string{"IGNORED"}) {
 		t.Errorf("waiting %v, ignored %v", waiting, ignored)
 	}
 	for _, f := range []string{FolderID, "game"} {
 		got := sharedWith(fake, f)
-		if slices.Contains(got, "FRIEND") || slices.Contains(got, "IGNORED") {
+		if slices.Contains(got, "FRIEND") || slices.Contains(got, "FRIEND2") || slices.Contains(got, "IGNORED") {
 			t.Errorf("%s is shared with a device nobody allowed: %v", f, got)
 		}
 	}
@@ -92,6 +96,7 @@ func TestAllowedDeviceBecomesASyncerPC(t *testing.T) {
 	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
 	MarkSyncerPC("LAPTOP")
 	IgnorePC("IGNORED")
+	IgnorePC("FRIEND2")
 	fake, c := trustFake(t)
 	ctx := context.Background()
 	if _, err := Reconcile(ctx, c); err != nil {
@@ -118,6 +123,7 @@ func TestIgnoredDeviceStaysIgnored(t *testing.T) {
 	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
 	MarkSyncerPC("LAPTOP")
 	IgnorePC("IGNORED")
+	IgnorePC("FRIEND2")
 	_, c := trustFake(t)
 	ctx := context.Background()
 	if _, err := Reconcile(ctx, c); err != nil {
@@ -164,6 +170,20 @@ func TestForgettingAPCClearsItsRequest(t *testing.T) {
 	IgnorePC("A")
 	ForgetSyncerPC("A")
 	if _, ignored := JoinRequests(); len(ignored) != 0 {
+		t.Errorf("ignored %v", ignored)
+	}
+}
+
+func TestIgnoredEntriesOfUnlinkedDevicesAreDropped(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	MarkSyncerPC("LAPTOP")
+	IgnorePC("IGNORED")
+	IgnorePC("GONE")
+	_, c := trustFake(t)
+	if _, err := Reconcile(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if _, ignored := JoinRequests(); !slices.Equal(ignored, []string{"IGNORED"}) {
 		t.Errorf("ignored %v", ignored)
 	}
 }

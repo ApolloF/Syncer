@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -535,9 +536,28 @@ func (a *App) pair(ctx context.Context, c *syncthing.Client, id, name string) er
 	return nil
 }
 
+// joinRequest checks that id is one of the devices that asked to join as
+// one of the user's PCs (and, for allowed, one turned down earlier), and
+// returns it in Syncthing's form.
+func joinRequest(id string, waiting, ignored []string, allowIgnored bool) (string, error) {
+	id, err := normalizeID(id)
+	if err != nil {
+		return "", err
+	}
+	if slices.Contains(waiting, id) || allowIgnored && slices.Contains(ignored, id) {
+		return id, nil
+	}
+	return "", errors.New("that PC isn't asking to join (any more)")
+}
+
 // AllowJoin makes a linked device that offered Syncer's shared settings one
 // of the user's PCs, and shares the saves with it.
 func (a *App) AllowJoin(id string) error {
+	waiting, ignored := meta.JoinRequests()
+	id, err := joinRequest(id, waiting, ignored, true)
+	if err != nil {
+		return err
+	}
 	c, err := a.client()
 	if err != nil {
 		return err
@@ -548,16 +568,22 @@ func (a *App) AllowJoin(id string) error {
 	if _, err := meta.Reconcile(ctx, c); err != nil {
 		return err
 	}
-	logx.Printf("allowed device %s as one of the user's PCs", id[:min(7, len(id))])
+	logx.Printf("allowed device %s as one of the user's PCs", id[:7])
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
 }
 
 // IgnoreJoin turns down a linked device's request to join as one of the
 // user's PCs. It stays linked in Syncthing, for whatever else it is used for.
-func (a *App) IgnoreJoin(id string) {
+func (a *App) IgnoreJoin(id string) error {
+	waiting, ignored := meta.JoinRequests()
+	id, err := joinRequest(id, waiting, ignored, false)
+	if err != nil {
+		return err
+	}
 	meta.IgnorePC(id)
 	runtime.EventsEmit(a.ctx, "changed")
+	return nil
 }
 
 func (a *App) DismissDevice(id string) error {

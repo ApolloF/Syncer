@@ -17,7 +17,8 @@
   let linking = $state(false)
   let removeFor = $state<main.DeviceView | null>(null)
   let showQR = $state(false)
-  let acceptFor = $state<main.PendingView | null>(null)
+  // A PC to check the ID of before it is linked (a request) or allowed (a PC that offered to join).
+  let confirmFor = $state<{ id: string; name: string; join: boolean } | null>(null)
 
   async function load() {
     try { v = await Devices() } catch (e) { if (ui.overview?.syncthing.running) fail(e) }
@@ -33,16 +34,15 @@
     linking = false
   }
 
-  async function accept() {
-    const p = acceptFor!
-    acceptFor = null
+  async function confirmed() {
+    const c = confirmFor!
+    confirmFor = null
     linking = true
-    if (await attempt(() => AcceptDevice(p.id), 'Linked. Saves will start syncing in a moment.')) { load(); refresh() }
+    const ok = c.join
+      ? await attempt(() => AllowJoin(c.id), `${c.name} can sync your saves now`)
+      : await attempt(() => AcceptDevice(c.id), 'Linked. Saves will start syncing in a moment.')
+    if (ok) { load(); refresh() }
     linking = false
-  }
-
-  async function allow(d: main.JoinView) {
-    if (await attempt(() => AllowJoin(d.id), `${d.name} can sync your saves now`)) { load(); refresh() }
   }
 
   async function ignore(d: main.JoinView) {
@@ -80,7 +80,7 @@
         <p class="mono faint ellipsis">{p.id}</p>
       </div>
       <button class="btn ghost" onclick={async () => { await attempt(() => DismissDevice(p.id)); load(); refresh() }}>Ignore</button>
-      <button class="btn primary" disabled={linking} onclick={() => (acceptFor = p)}>Review</button>
+      <button class="btn primary" disabled={linking} onclick={() => (confirmFor = { id: p.id, name: selfName(p.name), join: false })}>Review</button>
     </div>
   {/each}
 
@@ -89,10 +89,10 @@
       <div class="ic"><Icon name="devices" /></div>
       <div class="grow">
         <h2>{d.name} wants to join as one of your PCs</h2>
-        <p class="muted small">It is linked to Syncthing here and offers Syncer's settings. Allow it only if it is your own PC running Syncer: it gets all your game saves.</p>
+        <p class="muted small">It is already connected to this PC and says it runs Syncer. Allow it only if it is your own PC running Syncer: it gets all your game saves.</p>
       </div>
       <button class="btn ghost" onclick={() => ignore(d)}>Ignore</button>
-      <button class="btn primary" onclick={() => allow(d)}>Allow</button>
+      <button class="btn primary" onclick={() => (confirmFor = { id: d.id, name: d.name, join: true })}>Allow</button>
     </div>
   {/each}
 
@@ -142,7 +142,7 @@
             <div class="name">{d.name}</div>
             <div class="faint small">Asked to join as one of your PCs. Syncer leaves it alone.</div>
           </div>
-          <button class="btn" onclick={() => allow(d)}>Allow</button>
+          <button class="btn" onclick={() => (confirmFor = { id: d.id, name: d.name, join: true })}>Allow</button>
         </div>
       {/each}
     </div>
@@ -181,17 +181,20 @@
   </Modal>
 {/if}
 
-{#if acceptFor}
-  <Modal title="Link this PC?" onclose={() => (acceptFor = null)}>
-    <p>A PC asks to link with yours and get all your game saves. The name it gives itself is <strong>{selfName(acceptFor.name)}</strong>, but anyone can pick any name.</p>
+{#if confirmFor}
+  <Modal title={confirmFor.join ? 'Allow this PC?' : 'Link this PC?'} onclose={() => (confirmFor = null)}>
+    <p>
+      {confirmFor.join ? 'A PC that is already connected to this one says it runs Syncer. If you allow it, it gets all your game saves.' : 'A PC asks to link with yours and get all your game saves.'}
+      The name it gives itself is <strong>{confirmFor.name}</strong>, but anyone can pick any name.
+    </p>
     <p>Open Devices on your other PC and check that its ID is exactly this one:</p>
     <p class="idbox selectable">
-      {#each idGroups(acceptFor.id) as g, i}<span>{g}</span>{#if i < idGroups(acceptFor.id).length - 1}<span class="sep">-</span>{/if}{/each}
+      {#each idGroups(confirmFor.id) as g, i}<span>{g}</span>{#if i < idGroups(confirmFor.id).length - 1}<span class="sep">-</span>{/if}{/each}
     </p>
     <p>If it differs, or you don't know this PC, choose Cancel.</p>
     {#snippet actions()}
-      <button class="btn" onclick={() => (acceptFor = null)}>Cancel</button>
-      <button class="btn primary" onclick={accept}>The ID matches: link</button>
+      <button class="btn" onclick={() => (confirmFor = null)}>Cancel</button>
+      <button class="btn primary" onclick={confirmed}>{confirmFor?.join ? 'The ID matches: allow' : 'The ID matches: link'}</button>
     {/snippet}
   </Modal>
 {/if}
