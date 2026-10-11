@@ -111,6 +111,9 @@ No. Syncer doesn't connect to Google at all (apart from an empty time check). It
 **Do I need a backup folder or a cloud account?**
 No. Syncthing works on its own between PCs that are on at the same time, and with two PCs linked each one holds a full copy. A backup adds restore points and lets a PC pick up saves from a PC that is switched off. It can be any folder: Google Drive for desktop, OneDrive, a NAS share or an external drive.
 
+**My PCs are linked but don't connect.**
+The first time Syncthing listens, Windows asks whether it may use the network. If that was dismissed, Windows keeps blocking it and your other PCs can't reach this one. Open *Windows Security → Firewall & network protection → Allow an app through firewall*, choose *Change settings*, and tick *Syncthing* for *Private* networks (add it with *Allow another app* if it's missing). Do this on each PC.
+
 **How is this different from Ludusavi?**
 [Ludusavi](https://github.com/mtkennerly/ludusavi) is a backup tool: you back up and restore saves, on one or more PCs. Syncer keeps saves in sync between PCs continuously, in the background, and keeps a backup with history next to that. Syncer uses Ludusavi's manifest to find saves.
 

@@ -117,6 +117,7 @@
         <li>Paste its ID below — or paste this PC's ID over there.</li>
         <li>Choose Review on the other PC and check the ID matches. Done.</li>
       </ol>
+      <p class="faint small">If Windows asks whether Syncthing may use the network, choose Allow, or your other PCs can't reach this one.</p>
       <div class="field">
         <input type="text" class="mono" placeholder="XXXXXXX-XXXXXXX-…" bind:value={id} spellcheck="false" />
         <button class="btn icon" title="Paste" onclick={paste}><Icon name="paste" size={16} /></button>
