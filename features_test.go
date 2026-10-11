@@ -177,3 +177,10 @@ func TestWithSyncIgnores(t *testing.T) {
 		t.Errorf("with exclusions: %v", got)
 	}
 }
+
+func TestSavedDeletePatternsAreNotApplied(t *testing.T) {
+	got := withSyncIgnores("", []string{"*.log", "(?d)*.tmp", "(?i)(?d)*.bak"})
+	if !slices.Contains(got, "*.log") || slices.Contains(got, "(?d)*.tmp") || slices.Contains(got, "(?i)(?d)*.bak") {
+		t.Errorf("got %q", got)
+	}
+}

@@ -212,19 +212,22 @@ func certPinnedTransport(useTLS, loopback bool, configDir string) (http.RoundTri
 	if err != nil {
 		if loopback {
 			return sharedTransport("unpinned", func() *http.Transport {
-				return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}
+				return &http.Transport{IdleConnTimeout: idleConnTimeout, TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}
 			}), nil
 		}
 		return nil, errors.New("Syncthing's GUI certificate could not be read; refusing to connect to a network address")
 	}
 	return sharedTransport("pinned:"+string(pinned), func() *http.Transport {
-		return &http.Transport{TLSClientConfig: &tls.Config{
+		return &http.Transport{IdleConnTimeout: idleConnTimeout, TLSClientConfig: &tls.Config{
 			InsecureSkipVerify:    true, // we verify the leaf ourselves, against the pinned cert
 			MinVersion:            tls.VersionTLS12,
 			VerifyPeerCertificate: verifyPinnedCert(pinned),
 		}}
 	}), nil
 }
+
+// idleConnTimeout closes a shared transport's connections that nobody used for a while.
+const idleConnTimeout = 90 * time.Second
 
 // transports are shared because New runs for every call: a transport per
 // client would open a new TLS connection each time and leak the idle ones.

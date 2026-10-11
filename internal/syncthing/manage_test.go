@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+const bs = "\\"
+
 func TestNewestFirstComparesVersionsAsNumbers(t *testing.T) {
 	ps := []string{
 		`P\syncthing-windows-amd64-v1.9.0\syncthing.exe`,
@@ -24,34 +26,44 @@ func TestNewestFirstComparesVersionsAsNumbers(t *testing.T) {
 }
 
 func TestCompareVersions(t *testing.T) {
+	v := func(pre string, nums ...int) version { return version{nums: nums, pre: pre} }
 	for _, tt := range []struct {
-		a, b []int
+		a, b version
 		want int
 	}{
-		{[]int{1, 10}, []int{1, 9}, 1},
-		{[]int{1, 9}, []int{1, 10}, -1},
-		{[]int{2}, []int{2, 0, 0}, 0},
-		{nil, []int{1}, -1},
+		{v("", 1, 10), v("", 1, 9), 1},
+		{v("", 1, 9), v("", 1, 10), -1},
+		{v("", 2), v("", 2, 0, 0), 0},
+		{version{}, v("", 1), -1},
+		{v("rc.1", 2, 0, 0), v("", 2, 0, 0), -1},
+		{v("", 2, 0, 0), v("rc.1", 2, 0, 0), 1},
+		{v("rc.2", 2, 0, 0), v("rc.1", 2, 0, 0), 1},
+		{v("rc.1", 2, 1, 0), v("", 2, 0, 5), 1},
 	} {
 		if got := compareVersions(tt.a, tt.b); got != tt.want {
-			t.Errorf("compareVersions(%v, %v) = %d, want %d", tt.a, tt.b, got, tt.want)
+			t.Errorf("compareVersions(%+v, %+v) = %d, want %d", tt.a, tt.b, got, tt.want)
 		}
 	}
 }
 
-func TestExeCandidatesCoverOtherInstallers(t *testing.T) {
-	local, roaming, pf := `L`, `R`, `PF`
-	got := exeCandidates(local, roaming, pf)
-	for _, want := range []string{
+func TestPrereleaseSortsBelowItsRelease(t *testing.T) {
+	ps := []string{
+		"P"+bs+"syncthing-windows-amd64-v2.0.0-rc.1"+bs+"syncthing.exe",
+		"P"+bs+"syncthing-windows-amd64-v2.0.0"+bs+"syncthing.exe",
+	}
+	if got := newestFirst(ps); got[0] != ps[1] {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestExeCandidatesOnlyUseDefaultConfigInstalls(t *testing.T) {
+	got := exeCandidates("L")
+	want := []string{
 		filepath.Join("L", "Microsoft", "WinGet", "Links", "syncthing.exe"),
 		filepath.Join("L", "Programs", "Syncthing", "syncthing.exe"),
-		filepath.Join("PF", "Syncthing", "syncthing.exe"),
-		filepath.Join("R", "SyncTrayzor", "syncthing.exe"),
-		filepath.Join("PF", "SyncTrayzor", "syncthing.exe"),
-	} {
-		if !slices.Contains(got, want) {
-			t.Errorf("%s is not looked at: %v", want, got)
-		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
@@ -66,9 +78,23 @@ func TestExeCandidatesPutNewestWingetPackageFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got := exeCandidates(local, "", "")
+	got := exeCandidates(local)
 	if !strings.Contains(got[1], "v1.10.0") || !strings.Contains(got[2], "v1.9.0") {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestFromWinget(t *testing.T) {
+	local := filepath.Join("C:"+bs, "Users", "me", "AppData", "Local")
+	for exe, want := range map[string]bool{
+		filepath.Join(local, "Microsoft", "WinGet", "Links", "syncthing.exe"):                 true,
+		filepath.Join(local, "Microsoft", "WinGet", "Packages", "S_x", "a", "syncthing.exe"): true,
+		filepath.Join(local, "Programs", "Syncthing", "syncthing.exe"):                        false,
+		filepath.Join("C:"+bs, "tools", "syncthing.exe"):                                      false,
+	} {
+		if got := fromWinget(exe, local); got != want {
+			t.Errorf("fromWinget(%s) = %v, want %v", exe, got, want)
+		}
 	}
 }
 

@@ -146,10 +146,10 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 				failed = append(failed, id)
 			}
 		}
-		if len(failed) > 0 {
+		if gone := notPaused(ctx, c, failed); len(gone) > 0 {
 			store.UpdateState(func(st *store.State) {
 				st.PausedFolders = slices.DeleteFunc(st.PausedFolders, func(id string) bool {
-					return slices.Contains(failed, id)
+					return slices.Contains(gone, id)
 				})
 			})
 		}
@@ -231,6 +231,25 @@ func runResume() {
 	}
 }
 
+// notPaused returns those of ids that Syncthing really doesn't have paused.
+// A pause that came back with an error may still have gone through, so the
+// folders are looked at again, and the ones that are paused stay remembered.
+// If Syncthing can't be asked, none is dropped.
+func notPaused(ctx context.Context, c *syncthing.Client, ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	fs, err := c.AllFolders(ctx)
+	if err != nil {
+		return nil
+	}
+	paused := map[string]bool{}
+	for _, f := range fs {
+		paused[f.ID] = f.Paused
+	}
+	return slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return paused[id] })
+}
+
 // runUninstall is what the uninstaller runs. Nothing of Syncer will be left
 // to resume the folders it paused, so it does that now, and removes the
 // tasks and the start-with-Windows entry. Syncthing and all data stay.
@@ -249,11 +268,13 @@ func runUninstall() {
 }
 
 // releaseFolders resumes the folders Syncer paused for a pause or a running
-// game and forgets them. Folders paused by hand stay paused, and so do mod
-// folders held on purpose (ModHeld): they must not sync while a mod manager
-// may change them.
+// game and forgets them. Folders paused by hand stay paused. So do the mod
+// folders held on purpose (ModHeld), which is why that list isn't released
+// here: they must not sync while a mod manager may change them. A mod folder
+// that receives deployed mods stays paused too, as in syncPause.
 func releaseFolders(ctx context.Context, c *syncthing.Client) error {
-	if _, err := store.UpdateSettings(func(s *store.Settings) { s.PausedUntil = time.Time{} }); err != nil {
+	s, err := store.UpdateSettings(func(s *store.Settings) { s.PausedUntil = time.Time{} })
+	if err != nil {
 		return err
 	}
 	st := store.LoadState()
@@ -272,7 +293,7 @@ func releaseFolders(ctx context.Context, c *syncthing.Client) error {
 	var errs []error
 	failed := map[string]bool{}
 	for _, id := range held {
-		if !exists[id] || failed[id] {
+		if !exists[id] || failed[id] || isMod(s, id) && !holdable(s, id) {
 			continue
 		}
 		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
