@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -91,6 +92,9 @@ func isLauncherData(s store.Settings, id string) bool {
 // reports how it's doing when it does already. It doesn't add it again
 // once the user stopped syncing it.
 func (a *App) launcherData(ctx context.Context, launcher, path string) (apiLauncherData, error) {
+	if !features.Launchers {
+		return apiLauncherData{}, errNotInBuild
+	}
 	path, err := checkLauncherData(launcher, path)
 	if err != nil {
 		return apiLauncherData{}, err
