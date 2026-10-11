@@ -13,6 +13,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/mods"
@@ -465,6 +466,9 @@ type VortexShareView struct {
 // VortexShares lists how sharing each game's Vortex mod list goes on this
 // PC (nothing while the experimental option is off).
 func (a *App) VortexShares() []VortexShareView {
+	if !features.Mods {
+		return nil
+	}
 	s := store.LoadSettings()
 	if !s.ShareVortexMods {
 		return nil
@@ -516,6 +520,9 @@ func (a *App) VortexShares() []VortexShareView {
 // the other PCs take it as it is (which mods are enabled, their details).
 // It happens the next time Vortex is closed here.
 func (a *App) PushVortexList(game string) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	s := store.LoadSettings()
 	if !s.ShareVortexMods {
 		return errors.New(`turn on "Manage synced mods with Vortex on every PC" in Settings first`)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/mods"
@@ -286,6 +287,9 @@ func deployWarning(f mods.Found) string {
 // MakeModSource makes this PC the one sending a deployed-mods folder it
 // receives now: its own Vortex must deploy that game here.
 func (a *App) MakeModSource(id string) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	s := store.LoadSettings()
 	mf, ok := s.Mods[id]
 	if !ok || mf.Kind != mods.KindDeployed {
@@ -641,6 +645,9 @@ func dropModState(ctx context.Context, c *syncthing.Client, id string) {
 // HandOverMods lets the PC that claimed to send a deployed-mods folder
 // later do so: this PC receives from it from now on.
 func (a *App) HandOverMods(id string) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	ms := store.LoadState().ModSync[id]
 	mf := store.LoadSettings().Mods[id]
 	if mf.Role != meta.RoleSource || ms.Handover == "" {
@@ -1081,6 +1088,9 @@ func humanBytes(n int64) string {
 
 // ModUpdatePreview says what applying the waiting update would do.
 func (a *App) ModUpdatePreview(id string) (ModPreview, error) {
+	if !features.Mods {
+		return ModPreview{}, errNotInBuild
+	}
 	c, err := a.client()
 	if err != nil {
 		return ModPreview{}, err
@@ -1135,6 +1145,9 @@ var errApplying = errors.New("an update is being applied to it; wait until it's 
 // mod files sync, and checks the result. It returns once the update has
 // started; progress shows on the folder.
 func (a *App) ApplyModUpdate(id string, ok ApplyConfirm) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	c, err := a.client()
 	if err != nil {
 		return err
@@ -1507,6 +1520,9 @@ type SnapshotView struct {
 // first. Only the newest can be rolled back to: undoing an older update
 // would leave the files of the ones after it behind.
 func (a *App) ModSnapshots(id string) []SnapshotView {
+	if !features.Mods {
+		return nil
+	}
 	var out []SnapshotView
 	for _, sn := range mods.Snapshots(id) {
 		out = append(out, SnapshotView{Stamp: sn.Stamp, Created: sn.Created, Files: len(sn.Copied), Added: len(sn.Added), Bytes: sn.Bytes})
@@ -1517,6 +1533,9 @@ func (a *App) ModSnapshots(id string) []SnapshotView {
 // RollbackMods puts a deployed-mods folder back the way it was before its
 // last update: the files it replaced return and the files it added go.
 func (a *App) RollbackMods(id, stamp string) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	s := store.LoadSettings()
 	mf, ok := s.Mods[id]
 	if !ok || mf.Kind != mods.KindDeployed || mf.Role == meta.RoleSource {
@@ -1583,11 +1602,19 @@ func (a *App) RollbackMods(id, stamp string) error {
 }
 
 // ModAudit lists a folder's audit log, newest first.
-func (a *App) ModAudit(id string) []mods.AuditEntry { return mods.AuditLog(id) }
+func (a *App) ModAudit(id string) []mods.AuditEntry {
+	if !features.Mods {
+		return nil
+	}
+	return mods.AuditLog(id)
+}
 
 // RunModAudit checks a deployed-mods folder now: that it holds exactly the
 // files last applied (or sent). It changes nothing.
 func (a *App) RunModAudit(id string) (mods.AuditEntry, error) {
+	if !features.Mods {
+		return mods.AuditEntry{}, errNotInBuild
+	}
 	s := store.LoadSettings()
 	mf, ok := s.Mods[id]
 	if !ok || mf.Kind != mods.KindDeployed {
@@ -1645,6 +1672,9 @@ func (a *App) RunModAudit(id string) (mods.AuditEntry, error) {
 // source it keeps sending (and claims the role anew); on a receiver it takes
 // updates from the PC that claims to send them now.
 func (a *App) ReleaseModHold(id string) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	if applying.has(id) {
 		return errApplying
 	}
