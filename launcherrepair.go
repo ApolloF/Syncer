@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/ApolloF/syncer/internal/backup"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/fsx"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
@@ -75,6 +76,9 @@ type repairResult struct {
 // needsRepair) and adds back those a repair took out of Syncthing earlier.
 // It reports whether it changed anything.
 func repairLaunchers(ctx context.Context, c *syncthing.Client) bool {
+	if !features.Launchers {
+		return false
+	}
 	changed := finishRejoins(ctx, c)
 	s := store.LoadSettings()
 	if len(s.Launchers) == 0 || s.SyncDisabled || s.Paused() {
@@ -107,6 +111,9 @@ func repairLaunchers(ctx context.Context, c *syncthing.Client) bool {
 // rather than at the next background run or launcher call, and says what it
 // brought back.
 func (a *App) RepairFolder(id string) (string, error) {
+	if !features.Launchers {
+		return "", errNotInBuild
+	}
 	c, err := a.client()
 	if err != nil {
 		return "", errors.New("Syncthing isn't running")

@@ -73,6 +73,7 @@ func runBackground() {
 				inst := cachedInstalled()
 				pullNewer(ctx, func() bool { return playing(inst) })
 				modsTick(ctx, c)
+				freezeMods(ctx, c)
 			}
 		}
 	}
@@ -142,9 +143,12 @@ func cachedInstalled() *discover.Installed { return discover.CachedInstalled(tim
 func runBackup(ctx context.Context, onProg func(backup.Progress), pause func(context.Context)) (*store.BackupRun, error) {
 	s := store.LoadSettings()
 	target, ok := backupTarget(s)
+	if !ok && googleRetired(s) {
+		return nil, errGoogleRetired // not set up yet: not a failed backup
+	}
 	if !ok {
 		err := errors.New("Google Drive for desktop not found — install it and sign in, or choose a backup folder")
-		if s.BackupBackend == backendGoogle {
+		if googleBackend(s) {
 			err = gdrive.ErrSignedOut
 		}
 		record(&store.BackupRun{Started: time.Now(), Finished: time.Now(), Errors: []string{err.Error()}})
@@ -255,7 +259,10 @@ func forgetGoneBackupFrom(target string) {
 // backupTarget is where backups go: a custom folder, or the chosen Google
 // account's My Drive.
 func backupTarget(s store.Settings) (string, bool) {
-	if s.BackupBackend == backendGoogle {
+	if googleRetired(s) {
+		return "", false
+	}
+	if googleBackend(s) {
 		return googleDir(), gdrive.HasToken()
 	}
 	return backup.Target(s.BackupRoot, s.DriveRoot)

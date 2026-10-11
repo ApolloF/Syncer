@@ -8,6 +8,7 @@
   import type { store, main } from '../../wailsjs/go/models'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import { pausedUntil, tomorrowMorning } from '../lib/fmt'
+  import { launchersAvailable, modsAvailable, updatesByRebuild } from '../lib/features'
 
   const o = $derived(ui.overview)
   let log = $state<string[] | null>(null)
@@ -66,6 +67,7 @@
   // Mod options are the same on every PC; PCs set up before that may differ.
   let modsDiffer = $state<string[]>([])
   async function loadModsDiffer() {
+    if (!modsAvailable(o)) { modsDiffer = []; return }
     try { modsDiffer = (await ModSettingsDiffer()) ?? [] } catch { modsDiffer = [] }
   }
   $effect(() => { o?.settings.modsChanged; loadModsDiffer() })
@@ -190,11 +192,13 @@
     <div class="grow">
       <div class="name">Check for updates</div>
       <div class="faint small">
-        {#if o?.update}Syncer {o.update.latest} is available (you have {o.version}).
+        {#if o?.update}Syncer {o.update.latest} is available (you have {o.version}).{#if updatesByRebuild(o)} This is the personal build: rebuild it to update.{/if}
         {:else}Look for new Syncer releases on GitHub once a day. This is {o?.version === 'dev' ? 'a development build' : `version ${o?.version ?? ''}`}.{/if}
       </div>
     </div>
-    {#if o?.update}
+    {#if o?.update && updatesByRebuild(o)}
+      <button class="btn sm" onclick={() => BrowserOpenURL(o.update!.url)}><Icon name="external" size={14} /> Release</button>
+    {:else if o?.update}
       <button class="btn sm primary" disabled={updating} onclick={installUpdate}>
         {#if updating}<Icon name="refresh" size={14} class="spin" />{/if} Update now
       </button>
@@ -205,10 +209,12 @@
     {/if}
     <Toggle checked={!o?.settings.noUpdateCheck} label="Check for updates" onchange={(v) => save({ noUpdateCheck: !v })} />
   </div>
+  {#if !updatesByRebuild(o)}
   <div class="item">
     <div class="grow"><div class="name">Install updates automatically</div><div class="faint small">While Syncer runs in the tray (no window open, no game running, no backup in progress), it installs a new version by itself and restarts.</div></div>
     <Toggle checked={!o?.settings.noAutoUpdate} disabled={o?.settings.noUpdateCheck} label="Install updates automatically" onchange={(v) => save({ noAutoUpdate: !v })} />
   </div>
+  {/if}
   <div class="item">
     <div class="grow"><div class="name">Advanced sync settings</div><div class="faint small">Syncthing's own interface, for fine-tuning.</div></div>
     <button class="btn sm" disabled={!o?.syncthing.running} onclick={() => OpenSyncthingGUI()}><Icon name="external" size={14} /> Open</button>
@@ -219,8 +225,11 @@
   </div>
 </div>
 
-<LauncherData />
+{#if launchersAvailable(o)}
+  <LauncherData />
+{/if}
 
+{#if modsAvailable(o)}
 <h2 class="section">Mods</h2>
 {#if modsDiffer.length}
   <div class="card notice row">
@@ -305,6 +314,7 @@
       <button class="btn primary" onclick={() => { deployedOpen = false; save({ syncDeployedMods: true }) }}>Turn on</button>
     {/snippet}
   </Modal>
+{/if}
 {/if}
 
 {#if log}

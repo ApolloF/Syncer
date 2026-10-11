@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ApolloF/syncer/internal/features"
 )
 
 // ReleasesURL is the only place a release link may point into.
@@ -32,6 +34,8 @@ var (
 	latestURL = "https://api.github.com/repos/ApolloF/syncer/releases/latest"
 	// downloadURL is the only place the new exe may come from.
 	downloadURL = ReleasesURL + "download/"
+	// personal: this is the personal build, which never installs a release.
+	personal = features.Personal
 )
 
 // Release is a published Syncer release.
@@ -147,10 +151,18 @@ func decodeRelease(body io.Reader) (Release, error) {
 	return rel, nil
 }
 
+// ErrPersonalBuild is returned instead of installing a release over a
+// personal build: the public release lacks features that build has, so
+// updating it would silently drop them. It is rebuilt from source instead.
+var ErrPersonalBuild = errors.New("this is the personal build: rebuild it from the source to update (wails build -tags personal)")
+
 // Download fetches a into dir (next to the exe it replaces, so the swap is a
 // rename on one volume) and checks it against its checksum. It returns the
 // downloaded file.
 func Download(ctx context.Context, a *Asset, dir string) (string, error) {
+	if personal {
+		return "", ErrPersonalBuild
+	}
 	if a == nil || !strings.HasPrefix(a.URL, downloadURL) {
 		return "", errors.New("the release has no Syncer.exe to update from")
 	}
@@ -202,6 +214,9 @@ const (
 // Replace puts the downloaded file in place of exe. The running exe is moved
 // aside first; Cleanup deletes it once no process uses it any more.
 func Replace(exe, downloaded string) error {
+	if personal {
+		return ErrPersonalBuild
+	}
 	old := filepath.Join(filepath.Dir(exe), oldName)
 	if err := os.Remove(old); err != nil && !errors.Is(err, os.ErrNotExist) {
 		// Still running from an earlier update (a background task, say):

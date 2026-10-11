@@ -236,7 +236,9 @@ export function installMock() {
     devices: 2, online: 2, pending: 0, folders: folders.length, syncing: 0, errors: 0, issues: [],
     conflicts: folders.reduce((n, f) => n + f.conflicts, 0), overlaps: 0,
     drive: { found: false, running: false, myDrive: '', drives: [] },
-    google: { available: true, signedIn: true, account: 'alex@example.com', synced: lastBackup.finished, error: '' },
+    google: { available: true, signedIn: true, account: 'alex@example.com', synced: lastBackup.finished, error: '', retired: false },
+    features: { mods: true, googleSignIn: true, launchers: true, personal: true }, // the dev mock is the personal build
+    notices: [],
     target: `${home}\\AppData\\Local\\Syncer\\GameSaveBackup`, lastBackup, backingUp, gaming: false, paused: false,
     settings, version: 'v1.0.0', versionGaps: [],
   } satisfies Plain<main.Overview>)
@@ -327,6 +329,8 @@ export function installMock() {
       .map(([rel, size, ago, owner]) => main.SaveFile.createFrom({ rel, size: Math.round(size), modified: iso(ago), owner })),
     Log: () => [`${iso(14)} backup: ${folders.length} folders, 23 files updated`],
     ModSettingsDiffer: () => [],
+    DismissNotice: () => undefined,
+    UseDriveApp: () => undefined,
     VortexShares: vortexShares,
     ModAudit: (id: string) => audits.filter(e => e.folder === id),
     RunModAudit: async (id: string) => {

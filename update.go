@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/store"
@@ -50,7 +51,7 @@ func (a *App) updateLoop(ctx context.Context) {
 				logx.Printf("update check: %v", err)
 			}
 		}
-		if availableUpdate() != nil && a.autoUpdateNow() {
+		if availableUpdate() != nil && !features.Personal && a.autoUpdateNow() {
 			if err := a.installUpdate(ctx, true); err != nil {
 				logx.Printf("update: %v", err)
 			}
@@ -135,6 +136,9 @@ var errBackupRunning = errors.New("a backup is running; update once it has finis
 // no more than put Syncer.exe in place either). With auto, it gives up
 // quietly when the moment passed while it downloaded.
 func (a *App) installUpdate(ctx context.Context, auto bool) error {
+	if features.Personal {
+		return update.ErrPersonalBuild
+	}
 	exe, ok := taskExe()
 	if !ok || version == "dev" {
 		return errors.New("development builds don't update themselves")

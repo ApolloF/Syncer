@@ -4,6 +4,7 @@
   import { ui, init, applyTheme, attempt, refresh, showIssue, type View } from './lib/state.svelte'
   import { SwitchAccount } from '../wailsjs/go/main/App'
   import { pausedUntil } from './lib/fmt'
+  import { modsPageOn } from './lib/features'
   import Overview from './views/Overview.svelte'
   import Games from './views/Games.svelte'
   import Devices from './views/Devices.svelte'
@@ -16,7 +17,7 @@
   const nav = $derived<{ id: View; label: string; icon: string }[]>([
     { id: 'overview', label: 'Overview', icon: 'home' },
     { id: 'games', label: 'Games', icon: 'games' },
-    ...(ui.overview?.settings.findMods ? [{ id: 'mods' as View, label: 'Mods', icon: 'mods' }] : []),
+    ...(modsPageOn(ui.overview) ? [{ id: 'mods' as View, label: 'Mods', icon: 'mods' }] : []),
     ...(ui.overview?.settings.accounts ? [{ id: 'accounts' as View, label: 'Accounts', icon: 'users' }] : []),
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'backup', label: 'Backup', icon: 'cloud' },
@@ -40,7 +41,7 @@
 
   $effect(() => applyTheme(ui.overview?.settings.theme ?? 'system'))
   // The Mods page goes away with "Find installed mods".
-  $effect(() => { if (ui.view === 'mods' && ui.overview && !ui.overview.settings.findMods) ui.view = 'games' })
+  $effect(() => { if (ui.view === 'mods' && ui.overview && !modsPageOn(ui.overview)) ui.view = 'games' })
 
   const o = $derived(ui.overview)
   const badge = $derived<Partial<Record<View, number>>>({ devices: o?.pending ?? 0 })

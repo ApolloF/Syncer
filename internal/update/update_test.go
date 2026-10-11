@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -56,8 +57,8 @@ func TestLatestAndDownload(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	defer func(l, d string) { latestURL, downloadURL = l, d }(latestURL, downloadURL)
-	latestURL, downloadURL = srv.URL+"/latest", srv.URL+"/download/"
+	defer func(l, d string, p bool) { latestURL, downloadURL, personal = l, d, p }(latestURL, downloadURL, personal)
+	latestURL, downloadURL, personal = srv.URL+"/latest", srv.URL+"/download/", false
 
 	r, err := Latest(context.Background())
 	if err != nil {
@@ -147,6 +148,8 @@ func TestReplaceAndCleanup(t *testing.T) {
 	write("Syncer.exe", "old")
 	write(oldName, "older")
 	write(newName, "new")
+	defer func(p bool) { personal = p }(personal)
+	personal = false
 	if err := Replace(exe, filepath.Join(dir, newName)); err != nil {
 		t.Fatal(err)
 	}
@@ -160,5 +163,27 @@ func TestReplaceAndCleanup(t *testing.T) {
 	es, _ := os.ReadDir(dir)
 	if len(es) != 1 || es[0].Name() != "Syncer.exe" {
 		t.Fatalf("left after cleanup: %v", es)
+	}
+}
+
+func TestPersonalBuildNeverInstalls(t *testing.T) {
+	defer func(p bool) { personal = p }(personal)
+	personal = true
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "Syncer.exe")
+	if err := os.WriteFile(exe, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Download(context.Background(), &Asset{URL: downloadURL + "v9.9.9/Syncer.exe", Size: 1}, dir); !errors.Is(err, ErrPersonalBuild) {
+		t.Errorf("Download err = %v, want ErrPersonalBuild", err)
+	}
+	if err := Replace(exe, filepath.Join(dir, newName)); !errors.Is(err, ErrPersonalBuild) {
+		t.Errorf("Replace err = %v, want ErrPersonalBuild", err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "mine" {
+		t.Errorf("exe = %q, changed", b)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("files left in the folder: %v", entries)
 	}
 }

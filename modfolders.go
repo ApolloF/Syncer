@@ -13,6 +13,7 @@ import (
 
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/discover"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/mods"
@@ -39,7 +40,7 @@ var processPaths = winx.ProcessPaths
 // "Find installed mods" is on. Deployed mods are only listed with the
 // experimental option on.
 func modFounds(s store.Settings) []discover.Found {
-	if !s.FindMods {
+	if !features.Mods || !s.FindMods {
 		return nil
 	}
 	var out []discover.Found
@@ -57,6 +58,9 @@ func modFounds(s store.Settings) []discover.Found {
 // ScanMods lists this PC's mod folders for the Mods page, without looking
 // for save folders.
 func (a *App) ScanMods(refresh bool) []GameView {
+	if !features.Mods {
+		return nil
+	}
 	if refresh {
 		mods.Forget()
 	}
@@ -75,6 +79,9 @@ func modSize(f mods.Found) (int64, int, time.Time) {
 // AddModFolder starts syncing one of this PC's mod folders, identified by
 // its key (the UI never passes a path: the folder is found again here).
 func (a *App) AddModFolder(key string) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	s := store.LoadSettings()
 	if !s.FindMods {
 		return errors.New(`turn on "Find installed mods" in Settings first`)
@@ -188,6 +195,9 @@ func isMod(s store.Settings, id string) bool {
 
 // joinModAvailable starts syncing a mod folder another PC offers.
 func (a *App) joinModAvailable(ctx context.Context, c *syncthing.Client, v meta.Avail) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	if v.Kind == mods.KindDeployed {
 		return a.joinDeployed(ctx, c, v)
 	}
@@ -232,6 +242,9 @@ func (a *App) joinModAvailable(ctx context.Context, c *syncthing.Client, v meta.
 // resyncMod turns syncing back on for a mod folder that is backed up only.
 // The mod manager must still use that folder for the game.
 func (a *App) resyncMod(ctx context.Context, c *syncthing.Client, id string, lf store.LocalFolder, mf store.ModFolder) error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	if mf.Kind == mods.KindDeployed {
 		return errors.New(`remove it, then sync it again from "Found on this PC"`)
 	}
@@ -301,7 +314,7 @@ func (a *App) resyncMod(ctx context.Context, c *syncthing.Client, id string, lf 
 // when the experimental option is on. Deployed mods are never added on their
 // own. It returns the folders added.
 func autoAddMods(ctx context.Context, c *syncthing.Client, s store.Settings) []string {
-	if !s.FindMods || !s.AutoAddMods || s.SyncDisabled || s.Paused() {
+	if !features.Mods || !s.FindMods || !s.AutoAddMods || s.SyncDisabled || s.Paused() {
 		return nil
 	}
 	var added []string
@@ -364,6 +377,9 @@ func (a *App) modsLoop(ctx context.Context) {
 // precedence: while it lasts nothing is resumed here. It reports whether it
 // changed anything.
 func modsTick(ctx context.Context, c *syncthing.Client) bool {
+	if !features.Mods {
+		return false
+	}
 	modsTickMu.Lock()
 	defer modsTickMu.Unlock()
 	s := store.LoadSettings()
@@ -438,6 +454,48 @@ func modsTick(ctx context.Context, c *syncthing.Client) bool {
 	})
 	if changed {
 		logx.Printf("mod manager closed: mod folders resumed")
+	}
+	return changed
+}
+
+// freezeMods is what a build without mods does with the mod folders it
+// still finds in Syncthing: it pauses them the way an open mod manager does
+// (recorded in ModHeld first, so a crash in between never leaves one paused
+// and forgotten), and nothing in this build resumes them. A build with mods
+// resumes them through modsTick. It reports whether it paused any.
+func freezeMods(ctx context.Context, c *syncthing.Client) bool {
+	if features.Mods {
+		return false
+	}
+	s := store.LoadSettings()
+	if len(s.Mods) == 0 {
+		return false
+	}
+	fs, err := c.Folders(ctx)
+	if err != nil {
+		return false
+	}
+	changed := false
+	for _, f := range fs {
+		if !isMod(s, f.ID) || f.Paused || !holdable(s, f.ID) {
+			continue
+		}
+		store.UpdateState(func(st *store.State) {
+			if !slices.Contains(st.ModHeld, f.ID) {
+				st.ModHeld = append(st.ModHeld, f.ID)
+			}
+		})
+		if err := c.PatchFolder(ctx, f.ID, map[string]any{"paused": true}); err != nil {
+			logx.Printf("mods: pause %s: %v", f.ID, err)
+			store.UpdateState(func(st *store.State) {
+				st.ModHeld = slices.DeleteFunc(st.ModHeld, func(id string) bool { return id == f.ID })
+			})
+			continue
+		}
+		changed = true
+	}
+	if changed {
+		logx.Printf("mod folders paused: this version of Syncer has no mod syncing")
 	}
 	return changed
 }
