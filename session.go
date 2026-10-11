@@ -233,9 +233,9 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 			failed = append(failed, id)
 		}
 	}
-	if len(failed) > 0 {
+	if gone := notPaused(ctx, c, failed); len(gone) > 0 {
 		store.UpdateState(func(st *store.State) {
-			st.GamePaused = slices.DeleteFunc(st.GamePaused, func(id string) bool { return slices.Contains(failed, id) })
+			st.GamePaused = slices.DeleteFunc(st.GamePaused, func(id string) bool { return slices.Contains(gone, id) })
 		})
 	}
 	return errors.Join(errs...)
