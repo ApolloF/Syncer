@@ -3,6 +3,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
 )
 
@@ -384,15 +386,58 @@ func fileLock(name string) (unlock func()) {
 	}
 }
 
+// load fills v from the named file in the app dir. A missing file leaves v
+// as it is (a first run). A file that can't be read or parsed (an empty one
+// after a power cut, say) is set aside, never overwritten, and the last good
+// copy (name.bak) is used instead; only if that fails too does v keep its
+// defaults.
 func load(name string, v any) {
-	b, err := os.ReadFile(filepath.Join(paths.AppDir(), name))
-	if err == nil {
-		_ = json.Unmarshal(b, v)
+	p := filepath.Join(paths.AppDir(), name)
+	b, err := os.ReadFile(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return
 	}
+	if err == nil {
+		if err = json.Unmarshal(b, v); err == nil {
+			return
+		}
+	}
+	setAside(p, err)
+	bak, berr := os.ReadFile(p + ".bak")
+	if berr == nil {
+		if berr = json.Unmarshal(bak, v); berr == nil {
+			logx.Printf("%s: restored from %s.bak", name, name)
+			if werr := writeAtomic(p, bak); werr != nil {
+				logx.Printf("%s: writing the restored copy: %v", name, werr)
+			}
+			return
+		}
+	}
+	logx.Printf("%s: no usable backup copy (%v); starting from defaults", name, berr)
 }
 
+// setAside renames an unusable file to name.corrupt-<time>, so what is in it
+// stays available and a later save can't overwrite it.
+func setAside(p string, cause error) {
+	aside := p + ".corrupt-" + time.Now().Format("20060102-150405.000")
+	if err := os.Rename(p, aside); err != nil {
+		logx.Printf("%s is unusable (%v) and could not be set aside: %v", filepath.Base(p), cause, err)
+		return
+	}
+	logx.Printf("%s is unusable (%v); kept as %s", filepath.Base(p), cause, filepath.Base(aside))
+}
+
+// save writes the named file, first keeping the current one as name.bak if it
+// is good: a settings file lost to a crash or power cut can then be restored
+// by load.
 func save(name string, v any) error {
-	return WriteJSON(filepath.Join(paths.AppDir(), name), v)
+	p := filepath.Join(paths.AppDir(), name)
+	if old, err := os.ReadFile(p); err == nil && json.Valid(old) {
+		if err := writeAtomic(p+".bak", old); err != nil {
+			logx.Printf("%s: keeping a backup copy: %v", name, err)
+		}
+	}
+	return WriteJSON(p, v)
 }
 
 // WriteJSON writes v to path via a uniquely named temp file + rename, so
@@ -403,11 +448,22 @@ func WriteJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
+	return writeAtomic(path, b)
+}
+
+// writeAtomic is WriteJSON for bytes. The temp file is flushed to disk before
+// the rename: otherwise a power cut can leave the renamed file empty. The
+// folder isn't flushed too (Windows can't fsync a directory); NTFS journals
+// the rename itself.
+func writeAtomic(path string, b []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return err
 	}
 	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
