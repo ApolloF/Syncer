@@ -13,8 +13,8 @@
   "info": {
     "companyName": "ApolloF",
     "productName": "Syncer",
-    "productVersion": "0.6.0",
-    "copyright": "ApolloF",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2026 ApolloF",
     "comments": "Game save sync between PCs + Google Drive backup"
   }
 }
