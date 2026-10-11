@@ -45,7 +45,10 @@ jobs:
         run: npm test
 
       - name: Test
-        run: go test ./...
+        # Both builds: the public one (no tags) and the personal one (see internal/features).
+        run: |
+          go test ./...
+          go test -tags personal ./...
 
       - name: Version
         # Release builds carry their tag (shown in the app, used by the update
@@ -61,12 +64,11 @@ jobs:
           "SYNCER_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build
-        # The Google OAuth client ("Sign in with Google" for backups without
-        # Google Drive for desktop). Without these secrets the option is hidden.
-        env:
-          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
-          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
-        run: wails build -clean -nsis -trimpath -ldflags "-s -w -X main.version=${{ env.SYNCER_VERSION }} -X main.gdriveClientID=$env:GDRIVE_CLIENT_ID -X main.gdriveClientSecret=$env:GDRIVE_CLIENT_SECRET"
+        # The public release: no build tags, so no mods, Google sign-in or
+        # launcher integration, and no Google OAuth client. The personal build
+        # (wails build -tags personal) is made locally, with GDRIVE_CLIENT_ID /
+        # GDRIVE_CLIENT_SECRET passed as -X main.gdriveClientID / gdriveClientSecret.
+        run: wails build -clean -nsis -trimpath -ldflags "-s -w -X main.version=${{ env.SYNCER_VERSION }}"
 
       - uses: actions/upload-artifact@v4
         with:

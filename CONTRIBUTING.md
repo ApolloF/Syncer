@@ -15,8 +15,8 @@ Thanks for helping. Syncer is a one-person project, so small, focused changes ge
 3. Before you open the pull request, run:
 
    ```bash
-   go vet ./...
-   go test ./...
+   go vet ./... && go vet -tags personal ./...
+   go test ./... && go test -tags personal ./...
    cd frontend && npm ci && npm run check && npx vitest run
    cd .. && wails build
    ```
@@ -25,6 +25,12 @@ Thanks for helping. Syncer is a one-person project, so small, focused changes ge
 5. Try the change in the real app with `wails dev`. Anything that touches syncing, backups or restores must never delete or overwrite a save without a restore point.
 
 Requirements and the project layout are in the [README](README.md#develop).
+
+## Builds: public vs personal
+
+The default build (`wails build`, no tags) is the public release. Mods (mod folder sync, Vortex sharing), signing in to Google for backups and the launcher integration are switched off in it at compile time; the code is still compiled and tested. `wails build -tags personal` makes the maintainer's build with all of them on; it checks GitHub for a new release but never installs it over itself. The switches are constants in `internal/features`.
+
+When you touch one of those features, gate it where it is entered (a bound method, a background loop, the UI), keep the method's signature so the generated `frontend/wailsjs` stays the same, and never clear the user's stored settings or files. Run the Go tests for both builds: `go test ./...` and `go test -tags personal ./...`. Tests of a switched-off feature's internals go behind `//go:build personal`; tests that prove the public build leaves it alone go behind `//go:build !personal`.
 
 ## Style
 
