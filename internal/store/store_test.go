@@ -1,6 +1,9 @@
 package store
 
 import (
+	"sync"
+
+	"golang.org/x/sys/windows"
 	"strings"
 
 	"encoding/json"
@@ -130,5 +133,122 @@ func TestSaveDoesNotKeepBadFileAsBackup(t *testing.T) {
 	b, _ := os.ReadFile(settingsFile() + ".bak")
 	if !json.Valid(b) || !strings.Contains(string(b), "dark") {
 		t.Errorf("the .bak must stay the last good file, got %q", b)
+	}
+}
+
+func TestUnreadableFileIsLeftAlone(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if err := os.WriteFile(settingsFile()+".bak", []byte(`{"theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A directory can't be read as a file, like one another process holds.
+	if err := os.Mkdir(settingsFile(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if s := LoadSettings(); s.Theme == "dark" || s.KeepDays != 30 {
+		t.Errorf("want defaults for this call, got %+v", s)
+	}
+	if fi, err := os.Stat(settingsFile()); err != nil || !fi.IsDir() {
+		t.Error("the file was touched")
+	}
+	if len(corruptCopies(t)) != 0 {
+		t.Error("an unreadable file must not be set aside")
+	}
+	if b, _ := os.ReadFile(settingsFile() + ".bak"); string(b) != `{"theme":"dark"}` {
+		t.Errorf(".bak changed: %q", b)
+	}
+}
+
+func TestTypeChangeIsNotCorruption(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if err := os.WriteFile(settingsFile(), []byte(`{"theme":"dark","keepDays":"many"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsFile()+".bak", []byte(`{"theme":"light"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if s := LoadSettings(); s.Theme != "dark" {
+		t.Errorf("the valid JSON should be used as far as it fits, got %+v", s)
+	}
+	if len(corruptCopies(t)) != 0 {
+		t.Error("valid JSON of another shape was set aside")
+	}
+}
+
+func TestMissingFileWithBackupIsRecovered(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if err := os.WriteFile(settingsFile()+".bak", []byte(`{"theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if s := LoadSettings(); s.Theme != "dark" {
+		t.Errorf("got %+v", s)
+	}
+}
+
+func TestConcurrentRecoveryAgrees(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if err := os.WriteFile(settingsFile()+".bak", []byte(`{"theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsFile(), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	themes := make([]string, 8)
+	for i := range themes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			themes[i] = LoadSettings().Theme
+		}()
+	}
+	wg.Wait()
+	for i, th := range themes {
+		if th != "dark" {
+			t.Errorf("reader %d saw %q, want the recovered settings", i, th)
+		}
+	}
+	if n := len(corruptCopies(t)); n != 1 {
+		t.Errorf("%d set-aside copies, want 1", n)
+	}
+}
+
+func TestUpdateSettingsRecoversWithoutDeadlock(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if err := os.WriteFile(settingsFile()+".bak", []byte(`{"theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsFile(), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan Settings)
+	go func() {
+		s, _ := UpdateSettings(func(s *Settings) { s.KeepDays = 9 })
+		done <- s
+	}()
+	select {
+	case s := <-done:
+		if s.Theme != "dark" || s.KeepDays != 9 {
+			t.Errorf("got %+v", s)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("UpdateSettings deadlocked on its own lock")
+	}
+}
+
+func TestRenameRetriesWhenAnotherProcessHoldsTheFile(t *testing.T) {
+	old := rename
+	t.Cleanup(func() { rename = old })
+	calls := 0
+	rename = func(from, to string) error {
+		calls++
+		if calls < 3 {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: windows.ERROR_SHARING_VIOLATION}
+		}
+		return old(from, to)
+	}
+	p := filepath.Join(t.TempDir(), "x.json")
+	if err := WriteJSON(p, map[string]int{"v": 1}); err != nil || calls != 3 {
+		t.Fatalf("err=%v after %d renames", err, calls)
 	}
 }
