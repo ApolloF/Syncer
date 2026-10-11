@@ -173,7 +173,7 @@
     <Toggle checked={o?.settings.installedOnly} label="Only sync installed games" onchange={(v) => save({ installedOnly: v })} />
   </div>
   <div class="item">
-    <div class="grow"><div class="name">Take newer saves from other PCs' backups</div><div class="faint small">When a PC that played later is off, its saves come from its Google Drive backup — only if nothing here changed since this PC's last backup and no game is running. The saves here are kept as a restore point first.</div></div>
+    <div class="grow"><div class="name">Take newer saves from other PCs' backups</div><div class="faint small">When a PC that played later is off, its saves come from its backup — only if nothing here changed since this PC's last backup and no game is running. The saves here are kept as a restore point first.</div></div>
     <Toggle checked={!o?.settings.noCloudPull} label="Take newer saves from other PCs' backups" onchange={(v) => save({ noCloudPull: !v })} />
   </div>
   <div class="item">
@@ -245,7 +245,7 @@
       <div class="name">Find installed mods</div>
       <div class="faint small">
         List the mods Vortex installed for your games, and their load orders, on a Mods page so you can sync them to your other PCs.
-        Mod folders sync only; they aren't backed up to Google Drive unless you turn their backup on.
+        Mod folders sync only; they aren't backed up unless you turn their backup on.
         They pause while Vortex is open. Open Vortex on the other PC to enable and deploy the mods that arrive.
       </div>
     </div>
@@ -357,9 +357,9 @@
       <label class="chk"><input type="checkbox" bind:checked={opts.unpair} /> Unpair all linked PCs</label>
       <label class="chk"><input type="checkbox" bind:checked={opts.stopSyncthing} /> Stop Syncthing and remove its autostart</label>
       <label class="chk"><input type="checkbox" bind:checked={opts.uninstallSyncthing} disabled={!opts.stopSyncthing} /> Uninstall Syncthing</label>
-      <label class="chk"><input type="checkbox" bind:checked={opts.stopBackups} /> Stop Google Drive backups too</label>
+      <label class="chk"><input type="checkbox" bind:checked={opts.stopBackups} /> Stop backups too</label>
       {#if !opts.stopBackups}<p class="faint small indent">Your games keep being backed up.</p>{/if}
-      <label class="chk"><input type="checkbox" bind:checked={opts.deleteBackups} disabled={!opts.stopBackups} /> Delete Google Drive backups and history</label>
+      <label class="chk"><input type="checkbox" bind:checked={opts.deleteBackups} disabled={!opts.stopBackups} /> Delete backups and history</label>
       {#if opts.deleteBackups}<p class="err small indent">This can't be undone from Syncer.</p>{/if}
     {/if}
     {#snippet actions()}

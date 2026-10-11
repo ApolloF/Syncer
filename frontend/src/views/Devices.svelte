@@ -157,7 +157,7 @@
           <div class="grow">
             <div class="name">{d.name || d.id.slice(0, 7)}</div>
             <div class="faint small ellipsis">
-              {#if d.connected}Online · {viaText[d.via] ?? 'connected'}{d.address ? ` · ${d.address.replace(/^[a-z]+:\/\//, '')}` : ''}{:else}Offline — syncs when both PCs are on; newer saves it backed up still come from Google Drive{/if}
+              {#if d.connected}Online · {viaText[d.via] ?? 'connected'}{d.address ? ` · ${d.address.replace(/^[a-z]+:\/\//, '')}` : ''}{:else}Offline — syncs when both PCs are on; newer saves it backed up still come from its backup{/if}
             </div>
           </div>
           {#if d.versionGap === 'older'}<span class="pill warn" title="This PC runs Syncer {ui.overview?.version}. Open Syncer on {d.name || 'that PC'} and update it under Settings, or leave it in the tray and it updates by itself.">Needs update{d.version ? ` · ${d.version}` : ''}</span>

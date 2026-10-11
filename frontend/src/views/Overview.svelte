@@ -2,7 +2,7 @@
   import Icon from '../lib/Icon.svelte'
   import { ui, attempt, refresh, showIssue } from '../lib/state.svelte'
   import { ago, pausedUntil } from '../lib/fmt'
-  import { googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered, updatesByRebuild } from '../lib/features'
+  import { googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered, overviewSubtitle, updatesByRebuild } from '../lib/features'
   import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate, DismissNotice } from '../../wailsjs/go/main/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
@@ -91,7 +91,7 @@
 
 <header>
   <h1>Overview</h1>
-  <p class="muted">Your game saves, on every PC and safe in Google Drive.</p>
+  <p class="muted">{overviewSubtitle(o)}</p>
 </header>
 
 {#if steps.length}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { folderBackupStatus, googleBackendOn, googleRetired, googleSignInOffered, issueView, modsPageOn, updatesByRebuild } from './features'
+import { overviewSubtitle, folderBackupStatus, googleBackendOn, googleRetired, googleSignInOffered, issueView, modsPageOn, updatesByRebuild } from './features'
 
 const build = (features: object, settings: object = {}, google: object = {}) =>
   ({ features, settings, google }) as any
@@ -39,6 +39,24 @@ describe('features', () => {
     expect(issueView({ launcher: false, mod: true }, on)).toBe('mods')
     expect(issueView({ launcher: true, mod: false }, build(pub))).toBe('games')
     expect(issueView({ launcher: false, mod: true }, build(pub, { findMods: true }))).toBe('games')
+  })
+})
+
+describe('overviewSubtitle', () => {
+  const sub = (d: object, settings: object = {}, google: object = {}) =>
+    overviewSubtitle({ features: pub, settings, google, drive: d } as any)
+
+  it('makes no backup claim once the Google sign-in is retired', () => {
+    expect(sub({ found: true }, { backupBackend: 'google' }, { retired: true })).toBe('Your game saves, on every PC.')
+  })
+
+  it('names the backup folder or Google Drive for desktop when one is in use', () => {
+    expect(sub({ found: false }, { backupRoot: 'D:\b' })).toBe('Your game saves, on every PC and safe in your backup folder.')
+    expect(sub({ found: true })).toBe('Your game saves, on every PC and safe in Google Drive.')
+  })
+
+  it('makes no claim with no backup set', () => {
+    expect(sub({ found: false })).toBe('Your game saves, on every PC.')
   })
 })
 

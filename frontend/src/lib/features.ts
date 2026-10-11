@@ -26,6 +26,20 @@ export const googleRetiredNotice =
 /** The personal build is rebuilt to update; it never installs the public release. */
 export const updatesByRebuild = (o: O) => !!o?.features?.personal
 
+/** Where backups go, for copy that says so; empty when there is no backup to speak of. */
+export function backupPlace(o: Pick<main.Overview, 'features' | 'settings' | 'google' | 'drive'> | null | undefined): string {
+  if (!o || googleRetired(o)) return ''
+  if (googleBackendOn(o)) return 'Google Drive'
+  if (o.settings.backupRoot) return 'your backup folder'
+  return o.drive.found ? 'Google Drive' : ''
+}
+
+/** The Overview subtitle: only claims a backup when there is one. */
+export function overviewSubtitle(o: Parameters<typeof backupPlace>[0]): string {
+  const place = backupPlace(o)
+  return place ? `Your game saves, on every PC and safe in ${place}.` : 'Your game saves, on every PC.'
+}
+
 /** The page that lists a folder with an issue. */
 export function issueView(i: Pick<main.FolderIssue, 'launcher' | 'mod'>, o: O): 'settings' | 'mods' | 'games' {
   if (i.launcher && launchersAvailable(o)) return 'settings'

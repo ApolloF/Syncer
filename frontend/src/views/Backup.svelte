@@ -9,7 +9,7 @@
   import Toggle from '../lib/Toggle.svelte'
   import { ui, attempt, refresh, toast } from '../lib/state.svelte'
   import { ago, bytes } from '../lib/fmt'
-  import { folderBackupStatus, googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
+  import { backupPlace, folderBackupStatus, googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
   import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, UseDriveApp, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
   import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import type { store } from '../../wailsjs/go/models'
@@ -68,7 +68,7 @@
 <header class="row">
   <div class="grow">
     <h1>Backup</h1>
-    <p class="muted">A copy of every save in your Google Drive, with 30 days of history.</p>
+    <p class="muted">{backupPlace(o) ? `A copy of every save in ${backupPlace(o)}, with 30 days of history.` : 'Choose a backup folder to keep a copy of every save.'}</p>
   </div>
   {#if o?.gaming && o.settings.pauseWhileGaming && !o.backingUp}
     <span class="pill accent">Paused while you play</span>
