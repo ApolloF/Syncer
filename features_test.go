@@ -178,9 +178,16 @@ func TestWithSyncIgnores(t *testing.T) {
 	}
 }
 
-func TestSavedDeletePatternsAreNotApplied(t *testing.T) {
-	got := withSyncIgnores("", []string{"*.log", "(?d)*.tmp", "(?i)(?d)*.bak"})
-	if !slices.Contains(got, "*.log") || slices.Contains(got, "(?d)*.tmp") || slices.Contains(got, "(?i)(?d)*.bak") {
-		t.Errorf("got %q", got)
+func TestSavedDeletePatternsAreAppliedWithoutDelete(t *testing.T) {
+	got := withSyncIgnores("", []string{"*.log", "(?d)*.tmp", "(?i)(?D)*.bak", "(?d)*", "(?d)!x"})
+	for _, want := range []string{"*.log", "*.tmp", "(?i)*.bak"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("%q missing from %q", want, got)
+		}
+	}
+	for _, p := range got {
+		if hasDeletePrefix(p) || p == "*" || p == "!x" {
+			t.Errorf("unexpected %q in %q", p, got)
+		}
 	}
 }

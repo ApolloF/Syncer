@@ -45,11 +45,17 @@ func withSyncIgnores(kind string, pats []string) []string {
 	out = append(out, mods.Ignores(kind)...)
 	for _, p := range pats {
 		if hasDeletePrefix(p) {
-			// Saved by an older Syncer, which allowed it.
+			// Saved by an older Syncer, which allowed it. The file stays
+			// excluded, just without the flag that lets Syncthing delete it.
+			plain := stripDeletePrefix(p)
 			if _, dup := skippedDelete.LoadOrStore(p, true); !dup {
-				logx.Printf("ignoring the exclusion %q: (?d) lets Syncthing delete files", p)
+				logx.Printf("the exclusion %q is applied as %q: (?d) lets Syncthing delete files", p, plain)
 			}
-			continue
+			if c, err := cleanExclusions([]string{plain}); err == nil && len(c) == 1 {
+				p = c[0]
+			} else {
+				continue
+			}
 		}
 		if !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, p) }) {
 			out = append(out, p)
@@ -73,6 +79,24 @@ func hasDeletePrefix(p string) bool {
 			p = p[len("(?i)"):]
 		default:
 			return false
+		}
+	}
+}
+
+// stripDeletePrefix removes (?d), in any case, from the flags at the start of
+// p and keeps the others, such as (?i).
+func stripDeletePrefix(p string) string {
+	var kept string
+	for {
+		lower := strings.ToLower(p)
+		switch {
+		case strings.HasPrefix(lower, "(?d)"):
+			p = p[len("(?d)"):]
+		case strings.HasPrefix(lower, "(?i)"):
+			kept += p[:len("(?i)")]
+			p = p[len("(?i)"):]
+		default:
+			return kept + p
 		}
 	}
 }
