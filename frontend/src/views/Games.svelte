@@ -26,6 +26,7 @@
   import { isTime, plural, backupLine, stateOf } from '../lib/folders'
   import { conflictBadge, conflictPCs as pcsOf } from '../lib/conflicts'
   import { byModKind, modGameName, modPhase } from '../lib/mods'
+  import { modsAvailable, modsPageOn } from '../lib/features'
   import {
     Folders, ScanGames, AddFolder, AddModFolder, AddBackupOnly, AddBackupOnlyMany, RemoveFolder, SetFolderBackup, SetFolderSync, OpenPath,
     PickFolder, SaveSettings, Available, SyncAvailable, RemoveUninstalled,
@@ -140,7 +141,7 @@
 
   const o = $derived(ui.overview)
   // Mod folders have their own page while "Find installed mods" is on.
-  const hideMods = $derived(!modsPage && !!o?.settings.findMods)
+  const hideMods = $derived(!modsPage && (!modsAvailable(o) || !!o?.settings.findMods))
   const showCloud = $derived(o?.settings.showSteamCloud ?? false)
   const autoOn = $derived(o?.settings.autoAdd ?? true)
 
@@ -1079,7 +1080,7 @@
     </div>
     <p class="faint hint">
       {autoOn ? `New games are added automatically${o?.settings.installedOnly ? ' once installed' : ''}; unrecognized folders${(o?.settings.autoAddMaxGB ?? 1) > 0 ? ` and saves over ${o?.settings.autoAddMaxGB ?? 1} GB` : ''} need a click.` : 'Adding new games automatically is off.'}
-      {#if o?.settings.findMods}Mod folders are on the <button class="linkbtn" onclick={() => (ui.view = 'mods')}>Mods</button> page.{/if}
+      {#if modsPageOn(o)}Mod folders are on the <button class="linkbtn" onclick={() => (ui.view = 'mods')}>Mods</button> page.{/if}
       {#if hiddenCloud && !showCloud}{plural(hiddenCloud, 'Steam Cloud game')} hidden. <button class="linkbtn" onclick={showCloudGames}>Show them</button>{/if}
     </p>
   {/if}

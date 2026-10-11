@@ -2,6 +2,7 @@ import { EventsOn } from '../../wailsjs/runtime/runtime'
 import { Overview, Accounts } from '../../wailsjs/go/main/App'
 import type { main } from '../../wailsjs/go/models'
 import { err } from './fmt'
+import { issueView } from './features'
 
 export type View = 'overview' | 'games' | 'mods' | 'accounts' | 'devices' | 'backup' | 'settings'
 
@@ -50,7 +51,7 @@ export async function refreshAccounts() {
 
 /** Opens the page that lists a folder with an issue, scrolled to it. */
 export function showIssue(i: main.FolderIssue) {
-  ui.view = i.launcher ? 'settings' : i.mod && ui.overview?.settings.findMods ? 'mods' : 'games'
+  ui.view = issueView(i, ui.overview)
   ui.focus = i.id
 }
 

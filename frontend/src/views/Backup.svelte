@@ -9,12 +9,13 @@
   import Toggle from '../lib/Toggle.svelte'
   import { ui, attempt, refresh, toast } from '../lib/state.svelte'
   import { ago, bytes } from '../lib/fmt'
+  import { googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
   import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
   import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import type { store } from '../../wailsjs/go/models'
 
   const o = $derived(ui.overview)
-  const google = $derived(o?.settings.backupBackend === 'google')
+  const google = $derived(googleBackendOn(o))
   let signingIn = $state(false)
 
   async function signIn() {
@@ -115,6 +116,9 @@
         <button class="btn ghost sm" onclick={signOut}>Sign out</button>
       </div>
     {:else}
+      {#if googleRetired(o)}
+        <p class="small">{googleRetiredNotice}</p>
+      {/if}
       <div class="line"><span class="muted">Status</span>
         <span class="pill {o?.settings.backupRoot || o?.drive.running ? 'ok' : o?.drive.found ? 'warn' : 'err'}">{driveLabel}</span></div>
       {#if !o?.settings.backupRoot && ((o?.drive.drives?.length ?? 0) > 1 || o?.settings.driveRoot)}
@@ -141,7 +145,7 @@
           <button class="btn ghost sm" onclick={() => save({ backupRoot: '' })}>Use Google Drive</button>
         {/if}
       </div>
-      {#if o?.google.available && !o.settings.backupRoot}
+      {#if o && googleSignInOffered(o) && !o.settings.backupRoot}
         <p class="faint small">{o.drive.found ? 'Or let Syncer sign in to Google itself, without Google Drive for desktop.' : "No Google Drive app? Syncer can sign in to Google itself."}</p>
         <div class="row btns">
           <button class="btn sm {o.drive.found ? '' : 'primary'}" disabled={signingIn} onclick={signIn}>

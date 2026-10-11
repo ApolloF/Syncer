@@ -17,6 +17,7 @@ import (
 	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/discover"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/store"
@@ -66,7 +67,9 @@ func (a *App) startup(ctx context.Context) {
 		go a.notifyLoop(ctx)
 		go a.newerLoop(ctx)
 		go a.sessionLoop(ctx)
-		go a.modsLoop(ctx)
+		if features.Mods {
+			go a.modsLoop(ctx)
+		}
 		a.watch(ctx)
 	}()
 }
@@ -170,6 +173,7 @@ type Overview struct {
 	Overlaps   int              `json:"overlaps"`  // synced folders inside another synced folder
 	Drive      backup.DriveInfo `json:"drive"`
 	Google     GoogleView       `json:"google"`
+	Features   FeatureFlags     `json:"features"`
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"`
 	BackingUp  bool             `json:"backingUp"`
@@ -198,6 +202,7 @@ func (a *App) Overview() Overview {
 		Paused: s.Paused(), Version: version, Update: availableUpdate()}
 	o.Target, _ = backupTarget(s)
 	o.Google = googleView(s)
+	o.Features = buildFeatures()
 	o.Syncthing.Installed = syncthing.FindExe() != ""
 	a.mu.Lock()
 	o.BackingUp = a.backingUp
@@ -254,7 +259,7 @@ func (a *App) Overview() Overview {
 		}
 		o.Overlaps = len(nestedIn(bf))
 		for _, f := range fs {
-			if f.ID == meta.FolderID || accounts.InVault(f.Path) {
+			if f.ID == meta.FolderID || accounts.InVault(f.Path) || hiddenFolder(s, f.ID) {
 				continue
 			}
 			if !isLauncherData(s, f.ID) {
@@ -608,34 +613,7 @@ func (a *App) Log() []string { return logx.Tail(200) }
 
 func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	old := store.LoadSettings()
-	s, err := store.UpdateSettings(func(s *store.Settings) {
-		s.Theme, s.BackupEnabled, s.BackupRoot, s.DriveRoot = in.Theme, in.BackupEnabled, in.BackupRoot, in.DriveRoot
-		s.IncludeSteamCloud, s.AutoAdd = in.IncludeSteamCloud, in.AutoAdd
-		s.CloseToTray, s.StartAtLogin = in.CloseToTray, in.StartAtLogin
-		s.PauseWhileGaming, s.InstalledOnly = in.PauseWhileGaming, in.InstalledOnly
-		s.Notify, s.NoUpdateCheck = in.Notify, in.NoUpdateCheck
-		s.NoCloudPull, s.NoHoldWhilePlaying = in.NoCloudPull, in.NoHoldWhilePlaying
-		s.FindMods, s.AutoAddMods, s.SyncDeployedMods = in.FindMods, in.AutoAddMods, in.SyncDeployedMods
-		s.ShareVortexMods = in.ShareVortexMods
-		if !s.FindMods { // the experimental mod options build on finding mods
-			s.AutoAddMods, s.SyncDeployedMods, s.ShareVortexMods = false, false, false
-		}
-		if in.ModsMaxGB > 0 || in.ModsMaxGB == -1 {
-			s.ModsMaxGB = in.ModsMaxGB
-		}
-		if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
-			s.AutoAddMaxGB = in.AutoAddMaxGB
-		}
-		if in.IntervalHours > 0 {
-			s.IntervalHours = in.IntervalHours
-		}
-		if in.KeepDays > 0 {
-			s.KeepDays = in.KeepDays
-		}
-		if !meta.ModSettingsOf(*s).Same(meta.ModSettingsOf(old)) {
-			s.ModsChanged = meta.NewModStamp() // your other PCs take it over
-		}
-	})
+	s, err := store.UpdateSettings(func(s *store.Settings) { applySettingsInput(s, in, old) })
 	if err != nil {
 		return s, err
 	}
@@ -663,10 +641,44 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	return s, nil
 }
 
+// applySettingsInput takes the settings the UI sends into s, the stored ones
+// (old). What the UI doesn't show in this build is not in it, and stays.
+func applySettingsInput(s *store.Settings, in, old store.Settings) {
+	s.Theme, s.BackupEnabled, s.BackupRoot, s.DriveRoot = in.Theme, in.BackupEnabled, in.BackupRoot, in.DriveRoot
+	s.IncludeSteamCloud, s.AutoAdd = in.IncludeSteamCloud, in.AutoAdd
+	s.CloseToTray, s.StartAtLogin = in.CloseToTray, in.StartAtLogin
+	s.PauseWhileGaming, s.InstalledOnly = in.PauseWhileGaming, in.InstalledOnly
+	s.Notify, s.NoUpdateCheck = in.Notify, in.NoUpdateCheck
+	s.NoCloudPull, s.NoHoldWhilePlaying = in.NoCloudPull, in.NoHoldWhilePlaying
+	if features.Mods { // without mods the UI doesn't send these: what is stored stays as it is
+		s.FindMods, s.AutoAddMods, s.SyncDeployedMods = in.FindMods, in.AutoAddMods, in.SyncDeployedMods
+		s.ShareVortexMods = in.ShareVortexMods
+		if !s.FindMods { // the experimental mod options build on finding mods
+			s.AutoAddMods, s.SyncDeployedMods, s.ShareVortexMods = false, false, false
+		}
+		if in.ModsMaxGB > 0 || in.ModsMaxGB == -1 {
+			s.ModsMaxGB = in.ModsMaxGB
+		}
+	}
+	if in.AutoAddMaxGB > 0 || in.AutoAddMaxGB == -1 {
+		s.AutoAddMaxGB = in.AutoAddMaxGB
+	}
+	if in.IntervalHours > 0 {
+		s.IntervalHours = in.IntervalHours
+	}
+	if in.KeepDays > 0 {
+		s.KeepDays = in.KeepDays
+	}
+	if features.Mods && !meta.ModSettingsOf(*s).Same(meta.ModSettingsOf(old)) {
+		s.ModsChanged = meta.NewModStamp() // your other PCs take it over
+	}
+
+}
+
 // modsAutoOn reports whether adding mod folders automatically just started
 // (or its size limit changed), so it should run now.
 func modsAutoOn(old, s store.Settings) bool {
-	return s.FindMods && s.AutoAddMods && (!(old.FindMods && old.AutoAddMods) || s.ModsMaxGB != old.ModsMaxGB)
+	return features.Mods && s.FindMods && s.AutoAddMods && (!(old.FindMods && old.AutoAddMods) || s.ModsMaxGB != old.ModsMaxGB)
 }
 
 // publishSettings shares a change of the mod options with the other PCs now.
@@ -683,6 +695,9 @@ func (a *App) publishSettings() {
 // ModSettingsDiffer names your other PCs that use different mod options
 // (from before they were shared).
 func (a *App) ModSettingsDiffer() []string {
+	if !features.Mods {
+		return nil
+	}
 	c, err := a.client()
 	if err != nil {
 		return nil
@@ -698,6 +713,9 @@ func (a *App) ModSettingsDiffer() []string {
 
 // UseModSettingsEverywhere makes your other PCs take this PC's mod options.
 func (a *App) UseModSettingsEverywhere() error {
+	if !features.Mods {
+		return errNotInBuild
+	}
 	if _, err := store.UpdateSettings(func(s *store.Settings) { s.ModsChanged = meta.NewModStamp() }); err != nil {
 		return err
 	}
