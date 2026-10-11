@@ -8,7 +8,7 @@
   import Icon from '../lib/Icon.svelte'
   import Toggle from '../lib/Toggle.svelte'
   import { ui, attempt, refresh, toast } from '../lib/state.svelte'
-  import { ago, bytes } from '../lib/fmt'
+  import { ago, bytes, choices } from '../lib/fmt'
   import { backupPlace, folderBackupStatus, googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
   import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, UseDriveApp, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
   import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
@@ -192,13 +192,13 @@
   <div class="item">
     <div class="grow"><div class="name">Every</div></div>
     <select value={o?.settings.intervalHours} onchange={(e) => save({ intervalHours: +e.currentTarget.value })}>
-      {#each [1, 3, 6, 12, 24] as h}<option value={h}>{h === 24 ? 'day' : `${h} hour${h > 1 ? 's' : ''}`}</option>{/each}
+      {#each choices([1, 3, 6, 12, 24], o?.settings.intervalHours) as h}<option value={h}>{h === 24 ? 'day' : `${h} hour${h > 1 ? 's' : ''}`}</option>{/each}
     </select>
   </div>
   <div class="item">
-    <div class="grow"><div class="name">Keep old versions for</div><div class="faint small">Changed or deleted saves stay restorable this long. PCs backing up to the same Google Drive keep them as long as the longest setting among them.</div></div>
+    <div class="grow"><div class="name">Keep old versions for</div><div class="faint small">Changed or deleted saves stay restorable this long. PCs backing up to the same folder keep them as long as the longest setting among them.</div></div>
     <select value={o?.settings.keepDays} onchange={(e) => save({ keepDays: +e.currentTarget.value })}>
-      {#each [7, 14, 30, 90, 365] as d}<option value={d}>{d} days</option>{/each}
+      {#each choices([7, 14, 30, 90, 365], o?.settings.keepDays) as d}<option value={d}>{d} days</option>{/each}
     </select>
   </div>
   <div class="item">

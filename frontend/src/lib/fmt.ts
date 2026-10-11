@@ -47,3 +47,10 @@ export function err(e: unknown): string {
   if (e && typeof e === 'object' && 'message' in e) return String((e as Error).message)
   return String(e)
 }
+
+// choices returns a dropdown's options plus the current value when it isn't
+// one of them (set by an older version or by hand), so the select isn't blank.
+export function choices(options: number[], current: number | undefined): number[] {
+  if (!current || current <= 0 || options.includes(current)) return options
+  return [...options, current].sort((a, b) => a - b)
+}

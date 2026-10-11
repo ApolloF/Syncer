@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ago, bytes, err, pausedUntil, tomorrowMorning } from './fmt'
+import { ago, bytes, choices, err, pausedUntil, tomorrowMorning } from './fmt'
 
 describe('bytes', () => {
   it('uses 1024-based units', () => {
@@ -80,5 +80,16 @@ describe('err', () => {
     expect(err(new Error('boom'))).toBe('boom')
     expect(err({ message: 404 })).toBe('404')
     expect(err(null)).toBe('null')
+  })
+})
+
+describe('choices', () => {
+  it('keeps the list when the value is in it or unset', () => {
+    expect(choices([1, 3, 6], 3)).toEqual([1, 3, 6])
+    expect(choices([1, 3, 6], 0)).toEqual([1, 3, 6])
+    expect(choices([1, 3, 6], undefined)).toEqual([1, 3, 6])
+  })
+  it('adds a value from elsewhere in order', () => {
+    expect(choices([7, 14, 30, 90], 45)).toEqual([7, 14, 30, 45, 90])
   })
 })
