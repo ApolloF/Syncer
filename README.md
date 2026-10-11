@@ -17,6 +17,7 @@
 - Finds the saves of about 14,000 games on its own and syncs them between your PCs, end-to-end encrypted.
 - Keeps a versioned backup in any folder, for example your Google Drive for desktop folder, OneDrive, a NAS share or an external drive, with restore points you can roll back to.
 - With two PCs linked, each holds a full copy of your saves, so you have two copies even before you set up a backup.
+- Only one PC? Syncer works as a backup on its own: versioned copies of your saves in your Google Drive for desktop folder or any other folder.
 - Never overwrites a save behind your back: when two PCs changed the same save, you pick which one to keep.
 - Leaves what Steam Cloud, OneDrive and Ubisoft Connect already sync to them.
 - Holds syncing while a game runs, so no save changes under a running game.
