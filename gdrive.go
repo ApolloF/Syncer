@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/ApolloF/syncer/internal/backup"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/gdrive"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -62,11 +63,12 @@ type GoogleView struct {
 	Account   string    `json:"account"`
 	Synced    time.Time `json:"synced,omitzero"` // last sync with Drive
 	Error     string    `json:"error,omitempty"` // of the last sync
+	Retired   bool      `json:"retired"`         // backups were set to sign-in, which this build doesn't have: a folder must be chosen
 }
 
 func googleView(s store.Settings) GoogleView {
-	v := GoogleView{Available: gdriveConfig().Configured()}
-	if s.BackupBackend != backendGoogle {
+	v := GoogleView{Available: features.GoogleSignIn && gdriveConfig().Configured(), Retired: googleRetired(s)}
+	if !googleBackend(s) {
 		return v
 	}
 	if t, err := gdrive.LoadToken(); err == nil {
@@ -77,14 +79,30 @@ func googleView(s store.Settings) GoogleView {
 	return v
 }
 
+// googleBackend reports whether backups go through Syncer's own Google
+// sign-in.
+func googleBackend(s store.Settings) bool {
+	return features.GoogleSignIn && s.BackupBackend == backendGoogle
+}
+
+// googleRetired reports a stored "google" backend in a build without the
+// sign-in: backups wait until a folder is chosen, instead of silently going
+// to some other place. The token and the backup copy are left where they
+// are, for a build that has the sign-in.
+func googleRetired(s store.Settings) bool {
+	return !features.GoogleSignIn && s.BackupBackend == backendGoogle
+}
+
+// errGoogleRetired is what a backup says while googleRetired.
+var errGoogleRetired = errors.New("Sign in with Google is no longer part of Syncer. Choose a backup folder (for example your Google Drive for desktop folder) to keep backing up.")
+
 var googleSyncMu sync.Mutex
 
 // googleSync syncs the backup folder with Drive when backups go to Google
 // through Syncer's own sign-in; otherwise it does nothing. With maxAge, a
 // sync that ran that recently is enough. It doesn't run while a backup does.
 func googleSync(ctx context.Context, maxAge time.Duration) error {
-	s := store.LoadSettings()
-	if s.BackupBackend != backendGoogle {
+	if !googleBackend(store.LoadSettings()) {
 		return nil
 	}
 	googleSyncMu.Lock()
@@ -134,6 +152,9 @@ func recordGoogle(err error) {
 // SignInGoogle signs in to Google in the browser and makes backups go to
 // the account's Drive through Syncer's own sync.
 func (a *App) SignInGoogle() (string, error) {
+	if !features.GoogleSignIn {
+		return "", errNotInBuild
+	}
 	cfg := gdriveConfig()
 	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Minute)
 	defer cancel()
@@ -185,6 +206,9 @@ var errNotRevoked = errors.New("Signed out on this PC, but couldn't reach Google
 // (signing in to the same account again carries on with it). The token is
 // deleted even when Google can't be reached; that is then reported.
 func (a *App) SignOutGoogle() error {
+	if !features.GoogleSignIn {
+		return errNotInBuild
+	}
 	var revokeErr error
 	if tok, err := gdrive.LoadToken(); err == nil {
 		ctx, cancel := a.callCtx()
