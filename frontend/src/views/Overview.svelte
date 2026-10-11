@@ -3,7 +3,7 @@
   import { ui, attempt, refresh, showIssue } from '../lib/state.svelte'
   import { ago, pausedUntil } from '../lib/fmt'
   import { googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered, updatesByRebuild } from '../lib/features'
-  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate } from '../../wailsjs/go/main/App'
+  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate, DismissNotice } from '../../wailsjs/go/main/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
   const o = $derived(ui.overview)
@@ -19,6 +19,8 @@
   const steps = $derived.by(() => {
     if (!o) return []
     const s: { key: string; title: string; text: string; action?: string; icon: string }[] = []
+    if (o.notices?.includes('modsFrozen'))
+      s.push({ key: 'notice:modsFrozen', icon: 'alert', title: 'Mod syncing is gone', text: "Mod syncing isn't part of Syncer anymore. Your mod folders were paused and left as they are.", action: 'OK' })
     if (o.paused)
       s.push({ key: 'paused', icon: 'pause', title: `Paused until ${pausedUntil(o.settings.pausedUntil)}`, text: 'Syncing and automatic backups are paused on this PC. They pick up again on their own.', action: 'Resume now' })
     const ahead = o.versionGaps?.find((g) => g.gap === 'newer')
@@ -65,6 +67,7 @@
     else if (key === 'start') run(key, StartSyncthing, 'Sync started')
     else if (key === 'drive') BrowserOpenURL('https://www.google.com/drive/download/')
     else if (key === 'google' || key === 'googlegone') ui.view = 'backup'
+    else if (key.startsWith('notice:')) run(key, () => DismissNotice(key.slice(7)))
     else if (key === 'updatemanual') BrowserOpenURL(o!.update!.url)
     else if (key === 'link' || key === 'pending' || key === 'peerbehind') ui.view = 'devices'
     else if (key === 'peerahead') run(key, async () => { if (!(await CheckForUpdate())) throw new Error("GitHub doesn't offer a newer Syncer to this PC yet") })

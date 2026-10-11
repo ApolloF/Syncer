@@ -76,7 +76,7 @@ func (a *App) notifyProblems() {
 			// A settled conflict may be reported again when it comes back.
 			if id, ok := strings.CutPrefix(k, "conflict:"); ok && conflicts != nil && conflicts[id] == 0 {
 				delete(st.Notified, k)
-			} else if time.Since(t) > 60*24*time.Hour {
+			} else if time.Since(t) > 60*24*time.Hour && !strings.HasPrefix(k, "once:") {
 				delete(st.Notified, k)
 			}
 		}
@@ -122,6 +122,10 @@ func problems(s store.Settings, st store.State, conflicts map[string]int, labels
 			}
 		}
 		ps = append(ps, problem{"backup-failed:" + lb.Finished.UTC().Format(time.RFC3339), "Game save backup had problems", body})
+	}
+	if s.BackupEnabled && googleRetired(s) {
+		ps = append(ps, problem{"once:google-retired", "Choose a backup folder",
+			"Sign in with Google is no longer part of Syncer, so backups are waiting. Open Syncer and choose a backup folder (for example your Google Drive for desktop folder)."})
 	}
 	last := st.LastSuccess
 	if last.IsZero() && lb != nil && lb.OK {

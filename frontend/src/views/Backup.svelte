@@ -9,8 +9,8 @@
   import Toggle from '../lib/Toggle.svelte'
   import { ui, attempt, refresh, toast } from '../lib/state.svelte'
   import { ago, bytes } from '../lib/fmt'
-  import { googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
-  import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
+  import { folderBackupStatus, googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
+  import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, UseDriveApp, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
   import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import type { store } from '../../wailsjs/go/models'
 
@@ -62,12 +62,7 @@
   }
 
   const pct = $derived(live.prog && live.prog.folders ? (live.prog.folderIdx / live.prog.folders) * 100 : 0)
-  const driveLabel = $derived.by(() => {
-    if (!o) return ''
-    if (o.settings.backupRoot) return 'Custom folder'
-    if (!o.drive.found) return o.settings.driveRoot ? 'Chosen drive not found' : 'Not found'
-    return o.drive.running ? 'Connected' : 'Installed, not running'
-  })
+  const folderStatus = $derived(folderBackupStatus(o))
 </script>
 
 <header class="row">
@@ -120,7 +115,7 @@
         <p class="small">{googleRetiredNotice}</p>
       {/if}
       <div class="line"><span class="muted">Status</span>
-        <span class="pill {o?.settings.backupRoot || o?.drive.running ? 'ok' : o?.drive.found ? 'warn' : 'err'}">{driveLabel}</span></div>
+        <span class="pill {folderStatus.kind}">{folderStatus.text}</span></div>
       {#if !o?.settings.backupRoot && ((o?.drive.drives?.length ?? 0) > 1 || o?.settings.driveRoot)}
         <div class="line"><span class="muted">Account</span>
           <select value={o?.settings.driveRoot ?? ''} onchange={(e) => save({ driveRoot: e.currentTarget.value })}>
@@ -143,6 +138,9 @@
         <button class="btn ghost sm" onclick={async () => { await attempt(PickBackupFolder); refresh() }}>Change…</button>
         {#if o?.settings.backupRoot}
           <button class="btn ghost sm" onclick={() => save({ backupRoot: '' })}>Use Google Drive</button>
+        {/if}
+        {#if googleRetired(o) && o?.drive.found}
+          <button class="btn primary sm" onclick={async () => { await attempt(UseDriveApp); refresh() }}>Use Google Drive for desktop</button>
         {/if}
       </div>
       {#if o && googleSignInOffered(o) && !o.settings.backupRoot}

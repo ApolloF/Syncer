@@ -32,3 +32,13 @@ export function issueView(i: Pick<main.FolderIssue, 'launcher' | 'mod'>, o: O): 
   if (i.mod && modsPageOn(o)) return 'mods'
   return 'games'
 }
+
+/** The pill for where backups go (Backup page, folder backup): not set up while the Google sign-in is gone. */
+export function folderBackupStatus(o: Pick<main.Overview, 'features' | 'settings' | 'google' | 'drive'> | null | undefined): { kind: string; text: string } {
+  if (!o) return { kind: 'err', text: '' }
+  if (googleRetired(o)) return { kind: 'warn', text: 'Not set up' }
+  const kind = o.settings.backupRoot || o.drive.running ? 'ok' : o.drive.found ? 'warn' : 'err'
+  if (o.settings.backupRoot) return { kind, text: 'Custom folder' }
+  if (!o.drive.found) return { kind, text: o.settings.driveRoot ? 'Chosen drive not found' : 'Not found' }
+  return { kind, text: o.drive.running ? 'Connected' : 'Installed, not running' }
+}

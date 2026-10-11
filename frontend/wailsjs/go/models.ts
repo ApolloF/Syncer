@@ -1046,6 +1046,7 @@ export namespace main {
 	    drive: backup.DriveInfo;
 	    google: GoogleView;
 	    features: FeatureFlags;
+	    notices: string[];
 	    target: string;
 	    lastBackup?: store.BackupRun;
 	    backingUp: boolean;
@@ -1075,6 +1076,7 @@ export namespace main {
 	        this.drive = this.convertValues(source["drive"], backup.DriveInfo);
 	        this.google = this.convertValues(source["google"], GoogleView);
 	        this.features = this.convertValues(source["features"], FeatureFlags);
+	        this.notices = source["notices"];
 	        this.target = source["target"];
 	        this.lastBackup = this.convertValues(source["lastBackup"], store.BackupRun);
 	        this.backingUp = source["backingUp"];

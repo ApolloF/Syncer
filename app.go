@@ -60,6 +60,9 @@ func (a *App) startup(ctx context.Context) {
 				runtime.EventsEmit(ctx, "changed")
 			}
 			ensureIgnores(ctx, c)
+			if freezeMods(ctx, c) {
+				runtime.EventsEmit(ctx, "changed")
+			}
 		}
 		go a.autoAddLoop(ctx)
 		go a.pauseLoop(ctx)
@@ -174,6 +177,7 @@ type Overview struct {
 	Drive      backup.DriveInfo `json:"drive"`
 	Google     GoogleView       `json:"google"`
 	Features   FeatureFlags     `json:"features"`
+	Notices    []string         `json:"notices"` // one-time notices to show (see activeNotices)
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"`
 	BackingUp  bool             `json:"backingUp"`
@@ -203,6 +207,7 @@ func (a *App) Overview() Overview {
 	o.Target, _ = backupTarget(s)
 	o.Google = googleView(s)
 	o.Features = buildFeatures()
+	o.Notices = activeNotices(s, store.LoadState())
 	o.Syncthing.Installed = syncthing.FindExe() != ""
 	a.mu.Lock()
 	o.BackingUp = a.backingUp
@@ -603,8 +608,45 @@ func (a *App) PickBackupFolder() (string, error) {
 	if err != nil || p == "" {
 		return "", err
 	}
-	_, err = store.UpdateSettings(func(s *store.Settings) { s.BackupRoot, s.BackupBackend = p, "" })
-	return p, err
+	return p, useBackupFolder(p)
+}
+
+// UseDriveApp sends backups to Google Drive for desktop again (found on its
+// own), leaving the Google sign-in and a chosen folder behind.
+func (a *App) UseDriveApp() error { return useBackupFolder("") }
+
+// useBackupFolder sets where backups go: a folder, or "" for Google Drive
+// for desktop. Either way the Google sign-in is no longer the backend.
+func useBackupFolder(p string) error {
+	_, err := store.UpdateSettings(func(s *store.Settings) { s.BackupRoot, s.BackupBackend = p, "" })
+	return err
+}
+
+// noticeModsFrozen is the one-time notice about mod folders a build without
+// mods paused.
+const noticeModsFrozen = "modsFrozen"
+
+// activeNotices lists the one-time notices to show and not dismissed yet.
+func activeNotices(s store.Settings, st store.State) []string {
+	var out []string
+	if !features.Mods && len(s.Mods) > 0 && !st.NoticesDone[noticeModsFrozen] {
+		out = append(out, noticeModsFrozen)
+	}
+	return out
+}
+
+// DismissNotice marks a one-time notice as seen.
+func (a *App) DismissNotice(key string) error {
+	if key != noticeModsFrozen {
+		return errors.New("unknown notice")
+	}
+	store.UpdateState(func(st *store.State) {
+		if st.NoticesDone == nil {
+			st.NoticesDone = map[string]bool{}
+		}
+		st.NoticesDone[key] = true
+	})
+	return nil
 }
 
 func (a *App) Log() []string { return logx.Tail(200) }

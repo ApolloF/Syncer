@@ -90,6 +90,10 @@ export function DismissDevice(arg1) {
   return window['go']['main']['App']['DismissDevice'](arg1);
 }
 
+export function DismissNotice(arg1) {
+  return window['go']['main']['App']['DismissNotice'](arg1);
+}
+
 export function EditAccount(arg1, arg2, arg3) {
   return window['go']['main']['App']['EditAccount'](arg1, arg2, arg3);
 }
@@ -312,6 +316,10 @@ export function SyncAvailable(arg1) {
 
 export function UndoAll(arg1) {
   return window['go']['main']['App']['UndoAll'](arg1);
+}
+
+export function UseDriveApp() {
+  return window['go']['main']['App']['UseDriveApp']();
 }
 
 export function UseModSettingsEverywhere() {

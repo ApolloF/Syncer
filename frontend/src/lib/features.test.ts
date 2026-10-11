@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { googleBackendOn, googleRetired, googleSignInOffered, issueView, modsPageOn, updatesByRebuild } from './features'
+import { folderBackupStatus, googleBackendOn, googleRetired, googleSignInOffered, issueView, modsPageOn, updatesByRebuild } from './features'
 
 const build = (features: object, settings: object = {}, google: object = {}) =>
   ({ features, settings, google }) as any
@@ -39,5 +39,22 @@ describe('features', () => {
     expect(issueView({ launcher: false, mod: true }, on)).toBe('mods')
     expect(issueView({ launcher: true, mod: false }, build(pub))).toBe('games')
     expect(issueView({ launcher: false, mod: true }, build(pub, { findMods: true }))).toBe('games')
+  })
+})
+
+describe('folderBackupStatus', () => {
+  const drive = (d: object, settings: object = {}, google: object = {}) =>
+    ({ features: pub, settings, google, drive: d }) as any
+
+  it('says not set up while the Google sign-in is gone', () => {
+    expect(folderBackupStatus(drive({ found: true, running: true }, { backupBackend: 'google' }, { retired: true })))
+      .toEqual({ kind: 'warn', text: 'Not set up' })
+  })
+
+  it('describes the folder backup otherwise', () => {
+    expect(folderBackupStatus(drive({ found: true, running: true }))).toEqual({ kind: 'ok', text: 'Connected' })
+    expect(folderBackupStatus(drive({ found: true, running: false }))).toEqual({ kind: 'warn', text: 'Installed, not running' })
+    expect(folderBackupStatus(drive({ found: false }))).toEqual({ kind: 'err', text: 'Not found' })
+    expect(folderBackupStatus(drive({ found: false }, { backupRoot: 'D:\b' }))).toEqual({ kind: 'ok', text: 'Custom folder' })
   })
 })

@@ -51,6 +51,8 @@ export function Devices():Promise<main.DevicesView>;
 
 export function DismissDevice(arg1:string):Promise<void>;
 
+export function DismissNotice(arg1:string):Promise<void>;
+
 export function EditAccount(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function Folders():Promise<Array<main.FolderView>>;
@@ -162,6 +164,8 @@ export function SwitchDecision(arg1:string,arg2:string):Promise<void>;
 export function SyncAvailable(arg1:string):Promise<void>;
 
 export function UndoAll(arg1:main.UndoOptions):Promise<main.UndoReport>;
+
+export function UseDriveApp():Promise<void>;
 
 export function UseModSettingsEverywhere():Promise<void>;
 
