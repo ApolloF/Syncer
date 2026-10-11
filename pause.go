@@ -247,14 +247,16 @@ func runUninstall() {
 	}
 }
 
-// releaseFolders resumes every folder Syncer paused (a pause, a running game,
-// an open mod manager) and forgets them. Folders paused by hand stay paused.
+// releaseFolders resumes the folders Syncer paused for a pause or a running
+// game and forgets them. Folders paused by hand stay paused, and so do mod
+// folders held on purpose (ModHeld): they must not sync while a mod manager
+// may change them.
 func releaseFolders(ctx context.Context, c *syncthing.Client) error {
 	if _, err := store.UpdateSettings(func(s *store.Settings) { s.PausedUntil = time.Time{} }); err != nil {
 		return err
 	}
 	st := store.LoadState()
-	held := slices.Concat(st.PausedFolders, st.GamePaused, st.ModHeld)
+	held := slices.Concat(st.PausedFolders, st.GamePaused)
 	if len(held) == 0 {
 		return nil
 	}
@@ -281,7 +283,7 @@ func releaseFolders(ctx context.Context, c *syncthing.Client) error {
 		return slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return !failed[id] })
 	}
 	store.UpdateState(func(s *store.State) {
-		s.PausedFolders, s.GamePaused, s.ModHeld = keep(s.PausedFolders), keep(s.GamePaused), keep(s.ModHeld)
+		s.PausedFolders, s.GamePaused = keep(s.PausedFolders), keep(s.GamePaused)
 	})
 	return errors.Join(errs...)
 }

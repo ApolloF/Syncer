@@ -205,22 +205,19 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 	for _, id := range store.LoadState().PausedFolders {
 		userPaused[id] = true
 	}
-	var now []string
+	var now, toPause []string
 	var errs []error
 	for _, f := range fs {
 		if f.ID == meta.FolderID || (f.Paused && !userPaused[f.ID]) {
 			continue // paused by hand: not Syncer's to resume
 		}
-		if f.Paused {
-			now = append(now, f.ID)
-			continue
-		}
-		if err := c.PatchFolder(ctx, f.ID, map[string]any{"paused": true}); err != nil {
-			errs = append(errs, err)
-			continue
-		}
 		now = append(now, f.ID)
+		if !f.Paused {
+			toPause = append(toPause, f.ID)
+		}
 	}
+	// Remembered before pausing, so a crash in between can't leave a folder
+	// paused that nothing will ever resume.
 	store.UpdateState(func(st *store.State) {
 		for _, id := range now {
 			if !slices.Contains(st.GamePaused, id) {
@@ -229,6 +226,18 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 		}
 		st.GameHeld = time.Now()
 	})
+	var failed []string
+	for _, id := range toPause {
+		if err := c.PatchFolder(ctx, id, map[string]any{"paused": true}); err != nil {
+			errs = append(errs, err)
+			failed = append(failed, id)
+		}
+	}
+	if len(failed) > 0 {
+		store.UpdateState(func(st *store.State) {
+			st.GamePaused = slices.DeleteFunc(st.GamePaused, func(id string) bool { return slices.Contains(failed, id) })
+		})
+	}
 	return errors.Join(errs...)
 }
 

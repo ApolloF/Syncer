@@ -55,6 +55,7 @@ func TestReleaseFoldersResumesWhatSyncerPaused(t *testing.T) {
 	store.UpdateState(func(s *store.State) {
 		s.PausedFolders = []string{"a", "gone"}
 		s.GamePaused = []string{"b"}
+		s.ModHeld = []string{"c"}
 	})
 	if err := releaseFolders(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -62,10 +63,10 @@ func TestReleaseFoldersResumesWhatSyncerPaused(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if len(patched) != 2 || patched["a"] || patched["b"] {
-		t.Errorf("patched %v, want a and b resumed and nothing else", patched)
+		t.Errorf("patched %v, want a and b resumed and nothing else (c is a held mod folder)", patched)
 	}
-	if st := store.LoadState(); len(st.PausedFolders)+len(st.GamePaused)+len(st.ModHeld) != 0 {
-		t.Errorf("still remembers held folders: %+v", st)
+	if st := store.LoadState(); len(st.PausedFolders)+len(st.GamePaused) != 0 || len(st.ModHeld) != 1 {
+		t.Errorf("want the pause and game holds forgotten and the mod hold kept: %+v", st)
 	}
 	if !store.LoadSettings().PausedUntil.IsZero() {
 		t.Error("the pause is still set")
@@ -96,6 +97,31 @@ func TestSyncPauseRemembersFoldersBeforePausingThem(t *testing.T) {
 		t.Errorf("recorded before pausing: %v, want [a]", seen)
 	}
 	if got := store.LoadState().PausedFolders; len(got) != 0 {
+		t.Errorf("a folder that failed to pause is still recorded: %v", got)
+	}
+}
+
+func TestGameHoldRemembersFoldersBeforePausingThem(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`[{"id":"a","path":"C:/x","paused":false}]`))
+		case http.MethodPatch:
+			seen = store.LoadState().GamePaused
+			http.Error(w, "no", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, _ := syncthing.NewAt(strings.TrimPrefix(srv.URL, "http://"), "key")
+	if err := holdSyncWith(context.Background(), c, true); err == nil {
+		t.Fatal("a failed pause should be reported")
+	}
+	if len(seen) != 1 || seen[0] != "a" {
+		t.Errorf("recorded before pausing: %v, want [a]", seen)
+	}
+	if got := store.LoadState().GamePaused; len(got) != 0 {
 		t.Errorf("a folder that failed to pause is still recorded: %v", got)
 	}
 }
