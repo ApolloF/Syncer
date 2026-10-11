@@ -357,12 +357,21 @@ func wantAutoMod(f mods.Found, size int64, files int, s store.Settings) bool {
 
 var modsTickMu sync.Mutex
 
-// modsLoop keeps mod folders paused while their mod manager is open.
+// modsPass is one round of the mods loop: modsTick in a build with mods,
+// freezeMods in one without (each does nothing in the other build), so mod
+// folders that appear or get resumed later are dealt with without a restart.
+func modsPass(ctx context.Context, c *syncthing.Client) bool {
+	changed := modsTick(ctx, c)
+	return freezeMods(ctx, c) || changed
+}
+
+// modsLoop keeps mod folders paused while their mod manager is open, or, in a
+// build without mods, paused for good.
 func (a *App) modsLoop(ctx context.Context) {
 	for ctx.Err() == nil {
 		if c, err := a.client(); err == nil {
 			cctx, cancel := a.callCtx()
-			if modsTick(cctx, c) {
+			if modsPass(cctx, c) {
 				runtime.EventsEmit(a.ctx, "changed")
 			}
 			cancel()
@@ -477,19 +486,29 @@ func freezeMods(ctx context.Context, c *syncthing.Client) bool {
 	}
 	changed := false
 	for _, f := range fs {
-		if !isMod(s, f.ID) || f.Paused || !holdable(s, f.ID) {
+		if !isMod(s, f.ID) || f.Paused {
 			continue
 		}
-		store.UpdateState(func(st *store.State) {
-			if !slices.Contains(st.ModHeld, f.ID) {
-				st.ModHeld = append(st.ModHeld, f.ID)
+		// A receiver of deployed mods rests paused, so it needs no record.
+		record := holdable(s, f.ID)
+		if record {
+			err := store.UpdateState(func(st *store.State) {
+				if !slices.Contains(st.ModHeld, f.ID) {
+					st.ModHeld = append(st.ModHeld, f.ID)
+				}
+			})
+			if err != nil {
+				logx.Printf("mods: not pausing %s: %v", f.ID, err)
+				continue
 			}
-		})
+		}
 		if err := c.PatchFolder(ctx, f.ID, map[string]any{"paused": true}); err != nil {
 			logx.Printf("mods: pause %s: %v", f.ID, err)
-			store.UpdateState(func(st *store.State) {
-				st.ModHeld = slices.DeleteFunc(st.ModHeld, func(id string) bool { return id == f.ID })
-			})
+			if record && len(notPaused(ctx, c, []string{f.ID})) > 0 {
+				store.UpdateState(func(st *store.State) {
+					st.ModHeld = slices.DeleteFunc(st.ModHeld, func(id string) bool { return id == f.ID })
+				})
+			}
 			continue
 		}
 		changed = true

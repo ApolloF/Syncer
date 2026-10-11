@@ -72,9 +72,7 @@ func (a *App) startup(ctx context.Context) {
 		go logx.Run("notify loop", func() { a.notifyLoop(ctx) })
 		go logx.Run("newer-save loop", func() { a.newerLoop(ctx) })
 		go logx.Run("game session loop", func() { a.sessionLoop(ctx) })
-		if features.Mods {
-			go logx.Run("mods loop", func() { a.modsLoop(ctx) })
-		}
+		go logx.Run("mods loop", func() { a.modsLoop(ctx) })
 		logx.Run("watch loop", func() { a.watch(ctx) })
 	}()
 }

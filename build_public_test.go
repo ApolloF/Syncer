@@ -183,12 +183,13 @@ type pausingST struct {
 	mu      sync.Mutex
 	paused  map[string]bool
 	refuse  map[string]bool // folders whose change is refused
+	lost    map[string]bool // refused folders that were paused all the same
 	changes []string        // "pause id" / "resume id"
 }
 
 func newPausingST(t *testing.T, running, paused []string) (*pausingST, *syncthing.Client) {
 	t.Helper()
-	st := &pausingST{paused: map[string]bool{}, refuse: map[string]bool{}}
+	st := &pausingST{paused: map[string]bool{}, refuse: map[string]bool{}, lost: map[string]bool{}}
 	for _, id := range running {
 		st.paused[id] = false
 	}
@@ -210,6 +211,9 @@ func newPausingST(t *testing.T, running, paused []string) (*pausingST, *syncthin
 			var body struct{ Paused bool }
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if st.refuse[id] {
+				if st.lost[id] {
+					st.paused[id] = body.Paused
+				}
 				http.Error(w, "no", http.StatusInternalServerError)
 				return
 			}
@@ -242,17 +246,21 @@ func freezeSetup(t *testing.T) {
 
 func TestPublicBuildFreezesModFolders(t *testing.T) {
 	freezeSetup(t)
-	st, c := newPausingST(t, []string{"sky-mods", "sky-load", "skyrim"}, []string{"sky-deployed"})
+	st, c := newPausingST(t, []string{"sky-mods", "sky-load", "sky-lost", "sky-deployed", "skyrim"}, nil)
 	st.refuse["sky-load"] = true
+	st.refuse["sky-lost"], st.lost["sky-lost"] = true, true
+	store.UpdateSettings(func(s *store.Settings) { s.Mods["sky-lost"] = store.ModFolder{Kind: mods.KindStaging} })
 	if !freezeMods(context.Background(), c) {
 		t.Fatal("nothing frozen")
 	}
-	if got := st.changes; len(got) != 1 || got[0] != "pause sky-mods" {
-		t.Errorf("changes = %v, want only sky-mods paused (not the game, not the receiver, and sky-load was refused)", got)
+	slices.Sort(st.changes)
+	if got := st.changes; !slices.Equal(got, []string{"pause sky-deployed", "pause sky-mods"}) {
+		t.Errorf("changes = %v, want the mod folders paused, receiver included (not the game; sky-load was refused)", got)
 	}
 	held := store.LoadState().ModHeld
-	if !slices.Equal(held, []string{"sky-mods"}) {
-		t.Errorf("ModHeld = %v: a frozen folder is recorded, a refused one is not", held)
+	slices.Sort(held)
+	if !slices.Equal(held, []string{"sky-lost", "sky-mods"}) {
+		t.Errorf("ModHeld = %v: a frozen folder is recorded (also when the answer was lost), a refused one and a receiver are not", held)
 	}
 	st.changes = nil
 	if freezeMods(context.Background(), c) || len(st.changes) != 0 {
@@ -330,5 +338,22 @@ func TestPublicBuildFoldersLeavesOutModAndLauncherFolders(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "skyrim" {
 		t.Errorf("Folders = %+v, want only skyrim", got)
+	}
+}
+
+func TestPublicBuildFreezesNothingItCantRemember(t *testing.T) {
+	freezeSetup(t)
+	unreadableState(t)
+	st, c := newPausingST(t, []string{"sky-mods"}, nil)
+	if freezeMods(context.Background(), c) || len(st.changes) != 0 {
+		t.Errorf("paused without a record: %v", st.changes)
+	}
+}
+
+func TestPublicBuildModsLoopFreezes(t *testing.T) {
+	freezeSetup(t)
+	st, c := newPausingST(t, []string{"sky-mods"}, nil)
+	if !modsPass(context.Background(), c) || !slices.Equal(st.changes, []string{"pause sky-mods"}) {
+		t.Errorf("changes = %v", st.changes)
 	}
 }
