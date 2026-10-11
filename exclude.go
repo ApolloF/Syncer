@@ -82,8 +82,17 @@ func cleanExclusions(in []string) ([]string, error) {
 			return nil, fmt.Errorf("%q: patterns can't start with #, ! or //", p)
 		}
 		bare := p
-		for _, pre := range []string{"(?i)", "(?d)"} {
-			bare = strings.TrimPrefix(bare, pre)
+		for {
+			lower := strings.ToLower(bare)
+			if strings.HasPrefix(lower, "(?d)") {
+				// Syncthing deletes files matching a (?d) pattern when they
+				// stand in the way of removing a folder.
+				return nil, fmt.Errorf("%q: patterns can't start with (?d), as that lets Syncthing delete files", p)
+			}
+			if !strings.HasPrefix(lower, "(?i)") {
+				break
+			}
+			bare = bare[len("(?i)"):]
 		}
 		switch strings.Trim(bare, `/\`) {
 		case "", "*", "**":

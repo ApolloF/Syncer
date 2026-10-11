@@ -92,7 +92,7 @@ func TestCleanExclusions(t *testing.T) {
 	if err != nil || !slices.Equal(got, []string{"*.log", "Screenshots", "(?i)*shadercache*"}) {
 		t.Fatalf("got %q, %v", got, err)
 	}
-	for _, bad := range []string{"*", "**", "/", "/**", "(?i)*", "#include x", "!keep", "// c", "a\nb", strings.Repeat("x", 201)} {
+	for _, bad := range []string{"*", "**", "/", "/**", "(?i)*", "(?d)*.tmp", "(?i)(?d)*.tmp", "(?D)x", "#include x", "!keep", "// c", "a\nb", strings.Repeat("x", 201)} {
 		if _, err := cleanExclusions([]string{bad}); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
