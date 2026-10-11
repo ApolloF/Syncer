@@ -4,7 +4,7 @@
   import Modal from '../lib/Modal.svelte'
   import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
   import { bytes } from '../lib/fmt'
-  import { idGroups, selfName } from '../lib/devices'
+  import { idSegments, selfName } from '../lib/devices'
   import { Devices, AddDevice, DismissDevice, RemoveDevice, AcceptDevice, AllowJoin, IgnoreJoin, CopyText, PasteText } from '../../wailsjs/go/main/App'
   import type { main } from '../../wailsjs/go/models'
 
@@ -60,8 +60,6 @@
     CopyText(v.myID)
     toast('ID copied', 'ok')
   }
-
-  const groups = $derived(v?.myID.split('-') ?? [])
 </script>
 
 <header>
@@ -104,7 +102,7 @@
       </div>
       <p class="muted small">Enter this ID on your other PC.</p>
       <button class="idbox selectable" onclick={copy} title="Copy">
-        {#each groups as g, i}<span>{g}</span>{#if i < groups.length - 1}<span class="sep">-</span>{/if}{/each}
+        {#each idSegments(v?.myID ?? '') as s}<span class="grp">{s.group}</span>{#if s.dash}<span class="sep">-</span><wbr />{/if}{/each}
       </button>
       <div class="row">
         <button class="btn" onclick={copy}><Icon name="copy" size={15} /> Copy ID</button>
@@ -176,7 +174,9 @@
 {#if showQR && v}
   <Modal title="This PC's ID" onclose={() => (showQR = false)}>
     <img class="qr" src={v.qr} alt="QR code of device ID" />
-    <p class="mono center selectable">{v.myID}</p>
+    <p class="idbox center selectable">
+      {#each idSegments(v.myID) as s}<span class="grp">{s.group}</span>{#if s.dash}<span class="sep">-</span><wbr />{/if}{/each}
+    </p>
     {#snippet actions()}<button class="btn" onclick={() => (showQR = false)}>Close</button>{/snippet}
   </Modal>
 {/if}
@@ -189,7 +189,7 @@
     </p>
     <p>Open Devices on your other PC and check that its ID is exactly this one:</p>
     <p class="idbox selectable">
-      {#each idGroups(confirmFor.id) as g, i}<span>{g}</span>{#if i < idGroups(confirmFor.id).length - 1}<span class="sep">-</span>{/if}{/each}
+      {#each idSegments(confirmFor.id) as s}<span class="grp">{s.group}</span>{#if s.dash}<span class="sep">-</span><wbr />{/if}{/each}
     </p>
     <p>If it differs, or you don't know this PC, choose Cancel.</p>
     {#snippet actions()}
@@ -217,10 +217,11 @@
   .idbox {
     font-family: var(--mono); font-size: 13px; line-height: 1.7; text-align: left;
     padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--border);
-    background: var(--surface-2); color: var(--text); cursor: pointer; word-break: break-all;
+    background: var(--surface-2); color: var(--text); cursor: pointer;
     transition: border-color .15s;
   }
   .idbox:hover { border-color: var(--accent); }
+  .grp { white-space: nowrap; }
   .sep { color: var(--faint); }
   ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
   .field { display: flex; gap: 8px; }
