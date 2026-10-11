@@ -722,7 +722,7 @@
   {@const s = stateOf(f)}
   <div class="item" class:flash={flash === f.id} id="folder-{f.id}" transition:slide={{ duration: 150 }}>
     <div class="grow">
-      <div class="name ellipsis">{f.label}</div>
+      <div class="name ellipsis" title={f.label}>{f.label}</div>
       <div class="path faint ellipsis" title={f.path}>{f.path}</div>
       {#if f.kind === 'mods-deployed'}{@render deployedLine(f)}{/if}
       {#if !f.sync && f.backup}<div class="detail faint ellipsis">{backupLine(f)}</div>{/if}
@@ -812,7 +812,7 @@
   <div class="item" transition:slide={{ duration: 150 }}>
     <div class="grow">
       <div class="row name-row">
-        <span class="name ellipsis">{g.name}</span>
+        <span class="name ellipsis" title={g.name}>{g.name}</span>
         {#if g.kind}<span class="pill accent" title={modKinds[g.kind]?.tip}>{modKinds[g.kind]?.text ?? 'Mods'}</span>
           {#if g.kind === 'mods-deployed'}<span class="pill warn">Experimental</span>{/if}
         {/if}
@@ -851,7 +851,7 @@
 {#snippet availRow(a: main.AvailableView)}
   <div class="item" transition:slide={{ duration: 150 }}>
     <div class="grow">
-      <div class="name ellipsis">{a.label}</div>
+      <div class="name ellipsis" title={a.label}>{a.label}</div>
       <div class="path faint ellipsis" title={a.path}>{a.path}</div>
     </div>
     <span class="meta faint">from {a.from}</span>
@@ -937,7 +937,7 @@
       <div class="item ghead">
         <div class="grow">
           <div class="row name-row">
-            <span class="name ellipsis">{g.name}</span>
+            <span class="name ellipsis" title={g.name}>{g.name}</span>
             {#if shareOn && g.share}
               {#if g.share.err}<span class="pill err" title={g.share.err}>Mod list not shared</span>
               {:else if g.share.waiting}<span class="pill accent" title="Mods from your other PCs are added to Vortex here once their files have arrived">Waiting for files</span>
