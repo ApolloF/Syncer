@@ -23,10 +23,10 @@ const createNoWindow = 0x08000000
 // ManualInstallURL is where to get Syncthing when winget can't install it.
 const ManualInstallURL = "https://syncthing.net/downloads/"
 
-// FindExe locates syncthing.exe: Syncer's own winget install first, then
-// other installs Syncer can use as they are, then PATH.
+// FindExe locates syncthing.exe: Syncer's own winget install first, then a
+// current-user Syncthing Windows Setup install, then PATH.
 func FindExe() string {
-	for _, c := range exeCandidates(paths.Root(paths.Local), paths.Root(paths.Roaming), os.Getenv("ProgramFiles")) {
+	for _, c := range exeCandidates(paths.Root(paths.Local)) {
 		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
 			return c
 		}
@@ -38,70 +38,77 @@ func FindExe() string {
 }
 
 // exeCandidates lists where an installed syncthing.exe is expected, best
-// first:
+// first. Only installs that run with Syncthing's default per-user config
+// folder (%LOCALAPPDATA%\Syncthing, where Syncer looks) are used, so Syncer
+// never starts a Syncthing with another config that would clash on its port:
 //   - winget: the link in WinGet\Links, then the package folders (newest version first)
-//   - "Syncthing Windows Setup" (Bill-Stewart): %LOCALAPPDATA%\Programs\Syncthing for
-//     the current user, %ProgramFiles%\Syncthing for all users
-//   - SyncTrayzor: the copy it runs, %APPDATA%\SyncTrayzor, then the one its
-//     installer ships in %ProgramFiles%\SyncTrayzor
-func exeCandidates(local, roaming, programFiles string) []string {
+//   - "Syncthing Windows Setup" for the current user: %LOCALAPPDATA%\Programs\Syncthing
+//     (its README: config in LocalAppData\Syncthing)
+//
+// Left out on purpose: its all-users install (%ProgramFiles%\Syncthing, a
+// service with its config in ProgramData) and SyncTrayzor (its own config).
+func exeCandidates(local string) []string {
 	cands := []string{filepath.Join(local, "Microsoft", "WinGet", "Links", "syncthing.exe")}
 	m, _ := filepath.Glob(filepath.Join(local, "Microsoft", "WinGet", "Packages", "Syncthing.Syncthing_*", "syncthing-*", "syncthing.exe"))
 	cands = append(cands, newestFirst(m)...)
-	cands = append(cands, filepath.Join(local, "Programs", "Syncthing", "syncthing.exe"))
-	if programFiles != "" {
-		cands = append(cands, filepath.Join(programFiles, "Syncthing", "syncthing.exe"))
-	}
-	if roaming != "" {
-		cands = append(cands, filepath.Join(roaming, "SyncTrayzor", "syncthing.exe"))
-	}
-	if programFiles != "" {
-		cands = append(cands, filepath.Join(programFiles, "SyncTrayzor", "syncthing.exe"))
-	}
-	return cands
+	return append(cands, filepath.Join(local, "Programs", "Syncthing", "syncthing.exe"))
 }
 
-var versionPattern = regexp.MustCompile(`v(\d+(?:\.\d+)*)`)
+var versionPattern = regexp.MustCompile(`v(\d+(?:\.\d+)*)(-[0-9A-Za-z.]+)?`)
+
+// version is a release number with its prerelease suffix, if any.
+type version struct {
+	nums []int
+	pre  string // "rc.1" for v1.2.0-rc.1
+}
 
 // newestFirst sorts paths by the version number in them, highest first. The
 // numbers are compared as numbers (1.10 is newer than 1.9, which a plain
-// string sort gets wrong).
+// string sort gets wrong), and a prerelease is older than its release.
 func newestFirst(ps []string) []string {
 	out := slices.Clone(ps)
 	slices.SortStableFunc(out, func(a, b string) int { return -compareVersions(pathVersion(a), pathVersion(b)) })
 	return out
 }
 
-// pathVersion is the version in the last "syncthing-…" folder name of p, e.g.
-// [1 27 9] for syncthing-windows-amd64-v1.27.9\syncthing.exe.
-func pathVersion(p string) []int {
+// pathVersion is the version in the folder name of p, e.g. 1.27.9 for
+// syncthing-windows-amd64-v1.27.9\syncthing.exe.
+func pathVersion(p string) version {
 	m := versionPattern.FindStringSubmatch(filepath.Base(filepath.Dir(p)))
 	if m == nil {
-		return nil
+		return version{}
 	}
-	var nums []int
+	v := version{pre: strings.TrimPrefix(m[2], "-")}
 	for _, part := range strings.Split(m[1], ".") {
 		n, _ := strconv.Atoi(part)
-		nums = append(nums, n)
+		v.nums = append(v.nums, n)
 	}
-	return nums
+	return v
 }
 
 // compareVersions returns -1, 0 or 1; a missing part counts as 0.
-func compareVersions(a, b []int) int {
-	for i := 0; i < max(len(a), len(b)); i++ {
+func compareVersions(a, b version) int {
+	for i := 0; i < max(len(a.nums), len(b.nums)); i++ {
 		var x, y int
-		if i < len(a) {
-			x = a[i]
+		if i < len(a.nums) {
+			x = a.nums[i]
 		}
-		if i < len(b) {
-			y = b[i]
+		if i < len(b.nums) {
+			y = b.nums[i]
 		}
 		if x != y {
 			return cmp.Compare(x, y)
 		}
 	}
-	return 0
+	switch {
+	case a.pre == b.pre:
+		return 0
+	case a.pre == "":
+		return 1
+	case b.pre == "":
+		return -1
+	}
+	return strings.Compare(a.pre, b.pre)
 }
 
 // Hidden returns a command that runs without flashing a console window.
@@ -187,8 +194,16 @@ func installError(err error, output string) error {
 	return fmt.Errorf("Syncer couldn't install Syncthing automatically: %s. Windows' App Installer (winget) may be missing or out of date. You can install Syncthing yourself from %s, then open Syncer again.", cause, ManualInstallURL)
 }
 
-// Uninstall removes Syncthing via winget (per-user, silent).
+// Uninstall removes Syncthing via winget (per-user, silent). A Syncthing that
+// didn't come from winget is left for the user to remove.
 func Uninstall(ctx context.Context) error {
+	exe := FindExe()
+	if exe == "" {
+		return nil
+	}
+	if !fromWinget(exe, paths.Root(paths.Local)) {
+		return errors.New("this copy of Syncthing wasn't installed by Syncer; remove it in Windows Settings under Apps")
+	}
 	cmd := HiddenContext(ctx, winget(), "uninstall", "--id", "Syncthing.Syncthing", "-e", "--silent",
 		"--disable-interactivity", "--accept-source-agreements")
 	out, err := cmd.CombinedOutput()
@@ -196,6 +211,12 @@ func Uninstall(ctx context.Context) error {
 		return errors.New("winget uninstall failed: " + lastLine(string(out)))
 	}
 	return nil
+}
+
+// fromWinget reports whether exe is in winget's per-user folders.
+func fromWinget(exe, local string) bool {
+	rel, err := filepath.Rel(filepath.Join(local, "Microsoft", "WinGet"), exe)
+	return err == nil && !strings.HasPrefix(rel, "..")
 }
 
 func lastLine(s string) string {

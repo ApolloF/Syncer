@@ -120,6 +120,9 @@ func TestCertPinnedTransportIsShared(t *testing.T) {
 	if a != b {
 		t.Error("every client opened its own transport, leaking connections")
 	}
+	if tr, ok := a.(*http.Transport); !ok || tr.IdleConnTimeout != idleConnTimeout {
+		t.Error("idle connections are never closed")
+	}
 }
 
 func TestConnectionVia(t *testing.T) {
