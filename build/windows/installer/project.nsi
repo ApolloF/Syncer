@@ -71,6 +71,9 @@ ManifestDPIAware true
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
+# Syncthing is not Syncer's to stop: it keeps syncing after Syncer is gone.
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "Syncer will be removed from this PC. Your saves and backups are kept.$\r$\n$\r$\nSyncthing keeps running and syncing your saves between your PCs. To stop that, open Syncer and use Settings > Undo everything before you uninstall."
+!insertmacro MUI_UNPAGE_CONFIRM # Uninstall confirmation page, with the notice above.
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
 
 !insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
@@ -127,7 +130,11 @@ Section "uninstall"
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
-    RMDir /r $INSTDIR
+    # Only what Syncer put here: the install folder can be one the user chose
+    # (D:\Games, say) with other things in it, so it is never removed with /r.
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}.old*" # left by an update until nothing used it
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}.new"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
@@ -136,4 +143,7 @@ Section "uninstall"
     !insertmacro wails.unassociateCustomProtocols
 
     !insertmacro wails.deleteUninstaller
+
+    # Fails, and so keeps the folder, if anything else is in it.
+    RMDir "$INSTDIR"
 SectionEnd

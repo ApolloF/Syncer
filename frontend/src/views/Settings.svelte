@@ -85,13 +85,13 @@
   let undoOpen = $state(false)
   let undoBusy = $state(false)
   let undoReport = $state<main.UndoReport | null>(null)
-  let opts = $state({ unpair: true, stopBackups: false, deleteBackups: false, stopSyncthing: true, uninstallSyncthing: false })
+  let opts = $state({ unpair: true, stopBackups: false, deleteBackups: false, stopSyncthing: false, uninstallSyncthing: false })
 
   $effect(() => { if (!opts.stopSyncthing) opts.uninstallSyncthing = false })
   $effect(() => { if (!opts.stopBackups) opts.deleteBackups = false })
 
   function openUndo() {
-    opts = { unpair: true, stopBackups: false, deleteBackups: false, stopSyncthing: true, uninstallSyncthing: false }
+    opts = { unpair: true, stopBackups: false, deleteBackups: false, stopSyncthing: false, uninstallSyncthing: false }
     undoReport = null
     undoOpen = true
   }

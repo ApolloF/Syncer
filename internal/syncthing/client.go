@@ -21,8 +21,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/paths"
 )
 
@@ -35,7 +37,28 @@ var ErrNotRunning = errors.New("syncthing is not running")
 
 // ErrUnauthorized means a Syncthing answered but rejected the API key from
 // config.xml, i.e. the running instance uses a different config directory.
-var ErrUnauthorized = errors.New(`Syncthing is running but rejected Syncer's key: it uses a different config than %LOCALAPPDATA%\Syncthing`)
+// The message is for the user; the technical detail goes to the log.
+var ErrUnauthorized = errors.New("Syncthing is running, but Syncer can't connect to it. Another copy of Syncthing may be running; close it and try again.")
+
+// logUnauthorized notes a rejected key in the log, at most once a minute, as
+// every poll hits it while the problem lasts.
+func logUnauthorized(method, path string, status int) {
+	now := time.Now().UnixNano()
+	last := lastUnauthorizedLog.Load()
+	if now-last < int64(time.Minute) || !lastUnauthorizedLog.CompareAndSwap(last, now) {
+		return
+	}
+	logx.Printf("syncthing rejected the API key from %s (%s %s: HTTP %d): the running Syncthing probably uses another config directory", ConfigPath(), method, path, status)
+}
+
+var lastUnauthorizedLog atomic.Int64
+
+// notSetUpError is a config.xml that can't be read. It reads plainly for the
+// user and unwraps to the cause.
+type notSetUpError struct{ err error }
+
+func (e *notSetUpError) Error() string { return "Syncthing isn't set up on this PC yet." }
+func (e *notSetUpError) Unwrap() error { return e.err }
 
 // ConfigPath is Syncthing's default config location on Windows.
 func ConfigPath() string {
@@ -74,7 +97,7 @@ var cfgCache struct {
 func readConfig(path string) (xmlConfig, error) {
 	st, err := os.Stat(path)
 	if err != nil {
-		return xmlConfig{}, fmt.Errorf("syncthing config not found: %w", err)
+		return xmlConfig{}, &notSetUpError{err}
 	}
 	cfgCache.Lock()
 	defer cfgCache.Unlock()
@@ -83,7 +106,8 @@ func readConfig(path string) (xmlConfig, error) {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return xmlConfig{}, fmt.Errorf("syncthing config not found: %w", err)
+		logx.Printf("read %s: %v", path, err)
+		return xmlConfig{}, &notSetUpError{err}
 	}
 	var c xmlConfig
 	if err := xml.Unmarshal(b, &c); err != nil {
@@ -187,15 +211,31 @@ func certPinnedTransport(useTLS, loopback bool, configDir string) (http.RoundTri
 	pinned, err := readPinnedCert(configDir)
 	if err != nil {
 		if loopback {
-			return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}, nil
+			return sharedTransport("unpinned", func() *http.Transport {
+				return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}
+			}), nil
 		}
 		return nil, errors.New("Syncthing's GUI certificate could not be read; refusing to connect to a network address")
 	}
-	return &http.Transport{TLSClientConfig: &tls.Config{
-		InsecureSkipVerify:    true, // we verify the leaf ourselves, against the pinned cert
-		MinVersion:            tls.VersionTLS12,
-		VerifyPeerCertificate: verifyPinnedCert(pinned),
-	}}, nil
+	return sharedTransport("pinned:"+string(pinned), func() *http.Transport {
+		return &http.Transport{TLSClientConfig: &tls.Config{
+			InsecureSkipVerify:    true, // we verify the leaf ourselves, against the pinned cert
+			MinVersion:            tls.VersionTLS12,
+			VerifyPeerCertificate: verifyPinnedCert(pinned),
+		}}
+	}), nil
+}
+
+// transports are shared because New runs for every call: a transport per
+// client would open a new TLS connection each time and leak the idle ones.
+var transports sync.Map // key -> *http.Transport
+
+func sharedTransport(key string, build func() *http.Transport) *http.Transport {
+	if t, ok := transports.Load(key); ok {
+		return t.(*http.Transport)
+	}
+	t, _ := transports.LoadOrStore(key, build())
+	return t.(*http.Transport)
 }
 
 // readPinnedCert returns the DER bytes of Syncthing's GUI certificate.
@@ -307,6 +347,7 @@ func (c *Client) once(ctx context.Context, method, path string, body []byte, has
 		cfgCache.Lock()
 		cfgCache.ok = false // the key may have changed; read config.xml again next time
 		cfgCache.Unlock()
+		logUnauthorized(method, path, resp.StatusCode)
 		return ErrUnauthorized
 	}
 	if resp.StatusCode >= 300 {

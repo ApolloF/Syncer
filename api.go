@@ -896,6 +896,7 @@ func runAPI() {
 	if !features.Launchers {
 		return // exit 0 and no pipe: a launcher sees the same as with no Syncer running, and carries on
 	}
+	defer logx.RecoverExit("launcher API helper")
 	ln, err := listenAPI(apiPipe)
 	if err != nil {
 		return // the window (or another helper) serves it

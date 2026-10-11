@@ -42,8 +42,8 @@ func TestWhose(t *testing.T) {
 	const (
 		valid, notSharing = syncthing.RemoteValid, syncthing.RemoteNotSharing
 	)
-	pcs := map[string]bool{"LEGION": true}
-	direct := map[string]bool{"LEGION": true, "DOCKERD": true, "CLAUDE": true, "NAS": true}
+	pcs := map[string]bool{"DESKTOP": true}
+	direct := map[string]bool{"DESKTOP": true, "MEDIA-PC": true, "LAPTOP": true, "NAS": true}
 	cases := []struct {
 		name      string
 		f         syncthing.Folder
@@ -52,24 +52,24 @@ func TestWhose(t *testing.T) {
 		st        map[string]string
 		want      string
 	}{
-		{"notes vault with a server", syncthing.Folder{ID: "notes", Devices: devs("ME", "DOCKERD", "CLAUDE", "LEGION")}, false, false,
-			map[string]string{"notes/DOCKERD": valid, "notes/CLAUDE": valid, "notes/LEGION": notSharing}, ownerOther},
-		{"a server accepted it, even though another PC publishes it", syncthing.Folder{ID: "notes", Devices: devs("ME", "DOCKERD")}, false, true,
-			map[string]string{"notes/DOCKERD": valid}, ownerOther},
-		{"game offered to the server", syncthing.Folder{ID: "game", Devices: devs("ME", "LEGION", "DOCKERD")}, false, false,
-			map[string]string{"game/LEGION": valid, "game/DOCKERD": notSharing}, ownerSyncer},
-		{"game also on a NAS", syncthing.Folder{ID: "game", Devices: devs("ME", "LEGION", "NAS")}, false, false,
-			map[string]string{"game/LEGION": valid, "game/NAS": valid}, ownerSyncer},
-		{"other PC offline, published", syncthing.Folder{ID: "game", Devices: devs("ME", "LEGION", "DOCKERD")}, false, true,
-			map[string]string{"game/DOCKERD": notSharing}, ownerSyncer},
-		{"server offline: wait", syncthing.Folder{ID: "x", Devices: devs("ME", "DOCKERD")}, false, false, nil, ownerUnknown},
-		{"server offline, published", syncthing.Folder{ID: "x", Devices: devs("ME", "DOCKERD")}, false, true, nil, ownerSyncer},
-		{"only offered to the server", syncthing.Folder{ID: "x", Devices: devs("ME", "DOCKERD")}, false, false,
-			map[string]string{"x/DOCKERD": notSharing}, ownerSyncer},
+		{"notes vault with a server", syncthing.Folder{ID: "notes", Devices: devs("ME", "MEDIA-PC", "LAPTOP", "DESKTOP")}, false, false,
+			map[string]string{"notes/MEDIA-PC": valid, "notes/LAPTOP": valid, "notes/DESKTOP": notSharing}, ownerOther},
+		{"a server accepted it, even though another PC publishes it", syncthing.Folder{ID: "notes", Devices: devs("ME", "MEDIA-PC")}, false, true,
+			map[string]string{"notes/MEDIA-PC": valid}, ownerOther},
+		{"game offered to the server", syncthing.Folder{ID: "game", Devices: devs("ME", "DESKTOP", "MEDIA-PC")}, false, false,
+			map[string]string{"game/DESKTOP": valid, "game/MEDIA-PC": notSharing}, ownerSyncer},
+		{"game also on a NAS", syncthing.Folder{ID: "game", Devices: devs("ME", "DESKTOP", "NAS")}, false, false,
+			map[string]string{"game/DESKTOP": valid, "game/NAS": valid}, ownerSyncer},
+		{"other PC offline, published", syncthing.Folder{ID: "game", Devices: devs("ME", "DESKTOP", "MEDIA-PC")}, false, true,
+			map[string]string{"game/MEDIA-PC": notSharing}, ownerSyncer},
+		{"server offline: wait", syncthing.Folder{ID: "x", Devices: devs("ME", "MEDIA-PC")}, false, false, nil, ownerUnknown},
+		{"server offline, published", syncthing.Folder{ID: "x", Devices: devs("ME", "MEDIA-PC")}, false, true, nil, ownerSyncer},
+		{"only offered to the server", syncthing.Folder{ID: "x", Devices: devs("ME", "MEDIA-PC")}, false, false,
+			map[string]string{"x/MEDIA-PC": notSharing}, ownerSyncer},
 		{"introduced device offline", syncthing.Folder{ID: "x", Devices: devs("ME", "INTRODUCED")}, false, false, nil, ownerSyncer},
 		{"this PC only", syncthing.Folder{ID: "x", Devices: devs("ME")}, false, false, nil, ownerSyncer},
-		{"named in Syncer's settings", syncthing.Folder{ID: "mods", Devices: devs("ME", "DOCKERD")}, true, false,
-			map[string]string{"mods/DOCKERD": valid}, ownerSyncer},
+		{"named in Syncer's settings", syncthing.Folder{ID: "mods", Devices: devs("ME", "MEDIA-PC")}, true, false,
+			map[string]string{"mods/MEDIA-PC": valid}, ownerSyncer},
 	}
 	for _, c := range cases {
 		if got := whose(c.f, "ME", pcs, direct, c.strong, c.published, states(c.st)); got != c.want {
@@ -79,8 +79,8 @@ func TestWhose(t *testing.T) {
 }
 
 func TestUntangled(t *testing.T) {
-	pcs := map[string]bool{"LEGION": true}
-	introduced := map[string]bool{"DOCKERD": true}
+	pcs := map[string]bool{"DESKTOP": true}
+	introduced := map[string]bool{"MEDIA-PC": true}
 	ids := func(fds []syncthing.FolderDevice) string {
 		var out []string
 		for _, d := range fds {
@@ -96,17 +96,17 @@ func TestUntangled(t *testing.T) {
 		st         map[string]string
 		want       string
 	}{
-		{"game: the server never accepted it", syncthing.Folder{ID: "g", Devices: devs("ME", "LEGION", "DOCKERD")}, true, nil,
-			map[string]string{"g/DOCKERD": syncthing.RemoteNotSharing, "g/LEGION": syncthing.RemoteNotSharing}, "ME,LEGION"},
-		{"game: a NAS that syncs it keeps it", syncthing.Folder{ID: "g", Devices: devs("ME", "LEGION", "NAS")}, true, nil,
-			map[string]string{"g/NAS": syncthing.RemoteValid}, "ME,LEGION,NAS"},
+		{"game: the server never accepted it", syncthing.Folder{ID: "g", Devices: devs("ME", "DESKTOP", "MEDIA-PC")}, true, nil,
+			map[string]string{"g/MEDIA-PC": syncthing.RemoteNotSharing, "g/DESKTOP": syncthing.RemoteNotSharing}, "ME,DESKTOP"},
+		{"game: a NAS that syncs it keeps it", syncthing.Folder{ID: "g", Devices: devs("ME", "DESKTOP", "NAS")}, true, nil,
+			map[string]string{"g/NAS": syncthing.RemoteValid}, "ME,DESKTOP,NAS"},
 		{"game: offline device stays", syncthing.Folder{ID: "g", Devices: devs("ME", "NAS")}, true, nil, nil, "ME,NAS"},
-		{"game: introduced by a Syncer PC, can't connect", syncthing.Folder{ID: "g", Devices: devs("ME", "LEGION", "DOCKERD")}, true,
-			introduced, nil, "ME,LEGION"},
-		{"notes: the other PC never accepted it", syncthing.Folder{ID: "n", Devices: devs("ME", "DOCKERD", "LEGION")}, false, nil,
-			map[string]string{"n/DOCKERD": syncthing.RemoteValid, "n/LEGION": syncthing.RemoteNotSharing}, "ME,DOCKERD"},
-		{"notes: the other PC syncs it", syncthing.Folder{ID: "n", Devices: devs("ME", "DOCKERD", "LEGION")}, false, nil,
-			map[string]string{"n/LEGION": syncthing.RemoteValid}, "ME,DOCKERD,LEGION"},
+		{"game: introduced by a Syncer PC, can't connect", syncthing.Folder{ID: "g", Devices: devs("ME", "DESKTOP", "MEDIA-PC")}, true,
+			introduced, nil, "ME,DESKTOP"},
+		{"notes: the other PC never accepted it", syncthing.Folder{ID: "n", Devices: devs("ME", "MEDIA-PC", "DESKTOP")}, false, nil,
+			map[string]string{"n/MEDIA-PC": syncthing.RemoteValid, "n/DESKTOP": syncthing.RemoteNotSharing}, "ME,MEDIA-PC"},
+		{"notes: the other PC syncs it", syncthing.Folder{ID: "n", Devices: devs("ME", "MEDIA-PC", "DESKTOP")}, false, nil,
+			map[string]string{"n/DESKTOP": syncthing.RemoteValid}, "ME,MEDIA-PC,DESKTOP"},
 	}
 	for _, c := range cases {
 		if got := ids(untangled(c.f, "ME", c.own, pcs, c.introduced, states(c.st))); got != c.want {
@@ -120,16 +120,16 @@ func TestOwnDevicesAndFolders(t *testing.T) {
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.WriteJSON(filepath.Join(Dir(), "LEGION.json"), DeviceFile{Device: "LEGION"}); err != nil {
+	if err := store.WriteJSON(filepath.Join(Dir(), "DESKTOP.json"), DeviceFile{Device: "DESKTOP"}); err != nil {
 		t.Fatal(err)
 	}
 	MarkSyncerPC("NEW")
-	ds := []syncthing.Device{{DeviceID: "ME"}, {DeviceID: "LEGION"}, {DeviceID: "NEW"}, {DeviceID: "DOCKERD"}}
+	ds := []syncthing.Device{{DeviceID: "ME"}, {DeviceID: "DESKTOP"}, {DeviceID: "NEW"}, {DeviceID: "MEDIA-PC"}}
 	var got []string
 	for _, d := range OwnDevices("ME", ds) {
 		got = append(got, d.DeviceID)
 	}
-	if strings.Join(got, ",") != "ME,LEGION,NEW" {
+	if strings.Join(got, ",") != "ME,DESKTOP,NEW" {
 		t.Errorf("devices %v, want this PC, the one with a folder list and the one paired in Syncer", got)
 	}
 	ForgetSyncerPC("NEW")
@@ -257,7 +257,7 @@ func TestReconcileLeavesOtherDevicesAndFoldersAlone(t *testing.T) {
 	// The laptop runs Syncer and publishes The Sims 4, which is backed up
 	// only on this PC.
 	sims := SharedFolder{ID: "the-sims-4", Label: "The Sims 4", Root: paths.Documents, Rel: "Electronic Arts/The Sims 4/saves"}
-	if err := store.WriteJSON(filepath.Join(Dir(), "LEGION.json"), DeviceFile{Device: "LEGION", Name: "Legion",
+	if err := store.WriteJSON(filepath.Join(Dir(), "DESKTOP.json"), DeviceFile{Device: "DESKTOP", Name: "Desktop",
 		Folders: []SharedFolder{sims}}); err != nil {
 		t.Fatal(err)
 	}
@@ -267,20 +267,20 @@ func TestReconcileLeavesOtherDevicesAndFoldersAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &fakeSyncthing{
-		devices: map[string]syncthing.Device{"ME": {DeviceID: "ME"}, "LEGION": {DeviceID: "LEGION"},
-			"DOCKERD": {DeviceID: "DOCKERD"}, "CLAUDE": {DeviceID: "CLAUDE"}},
+		devices: map[string]syncthing.Device{"ME": {DeviceID: "ME"}, "DESKTOP": {DeviceID: "DESKTOP"},
+			"MEDIA-PC": {DeviceID: "MEDIA-PC"}, "LAPTOP": {DeviceID: "LAPTOP"}},
 		folders: map[string]syncthing.Folder{
-			FolderID: {ID: FolderID, Path: Dir(), Devices: devs("ME", "LEGION", "DOCKERD", "CLAUDE")},
-			"game": {ID: "game", Label: "Game", Path: filepath.Join(t.TempDir(), "Game"), Devices: devs("ME", "LEGION", "DOCKERD", "CLAUDE"),
+			FolderID: {ID: FolderID, Path: Dir(), Devices: devs("ME", "DESKTOP", "MEDIA-PC", "LAPTOP")},
+			"game": {ID: "game", Label: "Game", Path: filepath.Join(t.TempDir(), "Game"), Devices: devs("ME", "DESKTOP", "MEDIA-PC", "LAPTOP"),
 				Versioning: syncthing.Versioning{Type: "staggered"}, MaxConflicts: -1},
-			"notes": {ID: "notes", Label: "Notes", Path: filepath.Join(t.TempDir(), "Notes"), Devices: devs("ME", "DOCKERD", "CLAUDE", "LEGION")},
+			"notes": {ID: "notes", Label: "Notes", Path: filepath.Join(t.TempDir(), "Notes"), Devices: devs("ME", "MEDIA-PC", "LAPTOP", "DESKTOP")},
 		},
 		remote: map[string]string{
-			FolderID + "/LEGION": syncthing.RemoteValid, FolderID + "/DOCKERD": syncthing.RemoteNotSharing, FolderID + "/CLAUDE": syncthing.RemoteNotSharing,
-			"game/LEGION": syncthing.RemoteValid, "game/DOCKERD": syncthing.RemoteNotSharing, "game/CLAUDE": syncthing.RemoteNotSharing,
-			"notes/DOCKERD": syncthing.RemoteValid, "notes/CLAUDE": syncthing.RemoteValid, "notes/LEGION": syncthing.RemoteNotSharing,
+			FolderID + "/DESKTOP": syncthing.RemoteValid, FolderID + "/MEDIA-PC": syncthing.RemoteNotSharing, FolderID + "/LAPTOP": syncthing.RemoteNotSharing,
+			"game/DESKTOP": syncthing.RemoteValid, "game/MEDIA-PC": syncthing.RemoteNotSharing, "game/LAPTOP": syncthing.RemoteNotSharing,
+			"notes/MEDIA-PC": syncthing.RemoteValid, "notes/LAPTOP": syncthing.RemoteValid, "notes/DESKTOP": syncthing.RemoteNotSharing,
 		},
-		pending: map[string]any{"the-sims-4": map[string]any{"offeredBy": map[string]any{"LEGION": map[string]any{"label": "The Sims 4"}}}},
+		pending: map[string]any{"the-sims-4": map[string]any{"offeredBy": map[string]any{"DESKTOP": map[string]any{"label": "The Sims 4"}}}},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(fake.serve))
 	defer srv.Close()
@@ -294,7 +294,7 @@ func TestReconcileLeavesOtherDevicesAndFoldersAlone(t *testing.T) {
 	}
 
 	fake.mu.Lock()
-	for id, want := range map[string]string{FolderID: "ME,LEGION", "game": "ME,LEGION", "notes": "ME,DOCKERD,CLAUDE"} {
+	for id, want := range map[string]string{FolderID: "ME,DESKTOP", "game": "ME,DESKTOP", "notes": "ME,MEDIA-PC,LAPTOP"} {
 		var got []string
 		for _, d := range fake.folders[id].Devices {
 			got = append(got, d.DeviceID)
@@ -306,7 +306,7 @@ func TestReconcileLeavesOtherDevicesAndFoldersAlone(t *testing.T) {
 	if fake.folders["notes"].Versioning.Type != "" || fake.folders["notes"].MaxConflicts != 0 {
 		t.Errorf("Syncer changed the notes folder's settings: %+v", fake.folders["notes"])
 	}
-	ign := fake.devices["LEGION"].IgnoredFolders
+	ign := fake.devices["DESKTOP"].IgnoredFolders
 	if len(ign) != 1 || ign[0].ID != "the-sims-4" {
 		t.Errorf("the laptop's offer of a game backed up only here isn't ignored: %+v", ign)
 	}

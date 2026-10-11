@@ -53,6 +53,7 @@ func (a *App) startup(ctx context.Context) {
 	a.applyTheme(store.LoadSettings().Theme)
 	a.startTray()
 	go func() {
+		defer logx.Recover("startup")
 		ensureAutostart(store.LoadSettings().StartAtLogin)
 		migrateLegacy()
 		ensureBackgroundTask()
@@ -65,16 +66,16 @@ func (a *App) startup(ctx context.Context) {
 				runtime.EventsEmit(ctx, "changed")
 			}
 		}
-		go a.autoAddLoop(ctx)
-		go a.pauseLoop(ctx)
-		go a.updateLoop(ctx)
-		go a.notifyLoop(ctx)
-		go a.newerLoop(ctx)
-		go a.sessionLoop(ctx)
+		go logx.Run("auto-add loop", func() { a.autoAddLoop(ctx) })
+		go logx.Run("pause loop", func() { a.pauseLoop(ctx) })
+		go logx.Run("update loop", func() { a.updateLoop(ctx) })
+		go logx.Run("notify loop", func() { a.notifyLoop(ctx) })
+		go logx.Run("newer-save loop", func() { a.newerLoop(ctx) })
+		go logx.Run("game session loop", func() { a.sessionLoop(ctx) })
 		if features.Mods {
-			go a.modsLoop(ctx)
+			go logx.Run("mods loop", func() { a.modsLoop(ctx) })
 		}
-		a.watch(ctx)
+		logx.Run("watch loop", func() { a.watch(ctx) })
 	}()
 }
 
@@ -94,6 +95,7 @@ func (a *App) watch(ctx context.Context) {
 		evs, err := c.Events(ctx, since,
 			"StateChanged,FolderCompletion,DeviceConnected,DeviceDisconnected,PendingDevicesChanged,PendingFoldersChanged,ConfigSaved,FolderSummary,RemoteIndexUpdated,LocalIndexUpdated")
 		if err != nil {
+			since = 0 // a restarted Syncthing counts events from 1 again; waiting for the old number would stall
 			if up {
 				up = false
 				runtime.EventsEmit(ctx, "changed")

@@ -109,6 +109,19 @@ func TestCertPinnedTransport(t *testing.T) {
 	}
 }
 
+func TestCertPinnedTransportIsShared(t *testing.T) {
+	dir := t.TempDir()
+	_, pemBytes := selfSignedCert(t)
+	if err := os.WriteFile(filepath.Join(dir, "https-cert.pem"), pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := certPinnedTransport(true, true, dir)
+	b, _ := certPinnedTransport(true, true, dir)
+	if a != b {
+		t.Error("every client opened its own transport, leaking connections")
+	}
+}
+
 func TestConnectionVia(t *testing.T) {
 	for _, tt := range []struct {
 		c    Connection

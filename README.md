@@ -129,7 +129,7 @@ No. Syncthing works on its own between PCs that are on at the same time. The bac
 
 ## Develop
 
-Requirements: Go 1.26+, Node 22+, [Wails v2](https://wails.io) (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`).
+Requirements: Go 1.26+, Node 22+, [Wails v2](https://wails.io) (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0`).
 
 ```bash
 wails dev          # live-reloading app
