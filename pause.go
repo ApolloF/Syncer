@@ -121,24 +121,35 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 	}
 	var errs []error
 	if paused {
-		var now []string
+		var todo []string
 		for _, f := range fs {
-			if f.Paused {
-				continue
+			if !f.Paused {
+				todo = append(todo, f.ID)
 			}
-			if err := c.PatchFolder(ctx, f.ID, map[string]any{"paused": true}); err != nil {
-				errs = append(errs, err)
-				continue
-			}
-			now = append(now, f.ID)
 		}
-		if len(now) > 0 {
+		// Remembered before pausing, so a crash in between can't leave a
+		// folder paused that nothing will ever resume.
+		if len(todo) > 0 {
 			store.UpdateState(func(st *store.State) {
-				for _, id := range now {
+				for _, id := range todo {
 					if !slices.Contains(st.PausedFolders, id) {
 						st.PausedFolders = append(st.PausedFolders, id)
 					}
 				}
+			})
+		}
+		var failed []string
+		for _, id := range todo {
+			if err := c.PatchFolder(ctx, id, map[string]any{"paused": true}); err != nil {
+				errs = append(errs, err)
+				failed = append(failed, id)
+			}
+		}
+		if len(failed) > 0 {
+			store.UpdateState(func(st *store.State) {
+				st.PausedFolders = slices.DeleteFunc(st.PausedFolders, func(id string) bool {
+					return slices.Contains(failed, id)
+				})
 			})
 		}
 		return errors.Join(errs...)
@@ -194,6 +205,7 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 
 // runResume is what the one-off \Syncer-Resume task runs.
 func runResume() {
+	defer logx.RecoverExit("resume")
 	s := store.LoadSettings()
 	if s.Paused() {
 		return // the pause was extended; its own task will come
@@ -216,6 +228,62 @@ func runResume() {
 			logx.Printf("resume: %v", err)
 		}
 	}
+}
+
+// runUninstall is what the uninstaller runs. Nothing of Syncer will be left
+// to resume the folders it paused, so it does that now, and removes the
+// tasks and the start-with-Windows entry. Syncthing and all data stay.
+func runUninstall() {
+	defer logx.RecoverExit("uninstall")
+	_ = tasks.Delete(tasks.BackupTask)
+	_ = tasks.Delete(tasks.ResumeTask)
+	removeAutostart()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if c, err := syncthing.New(); err == nil {
+		if err := releaseFolders(ctx, c); err != nil {
+			logx.Printf("uninstall: %v", err)
+		}
+	}
+}
+
+// releaseFolders resumes every folder Syncer paused (a pause, a running game,
+// an open mod manager) and forgets them. Folders paused by hand stay paused.
+func releaseFolders(ctx context.Context, c *syncthing.Client) error {
+	if _, err := store.UpdateSettings(func(s *store.Settings) { s.PausedUntil = time.Time{} }); err != nil {
+		return err
+	}
+	st := store.LoadState()
+	held := slices.Concat(st.PausedFolders, st.GamePaused, st.ModHeld)
+	if len(held) == 0 {
+		return nil
+	}
+	fs, err := c.Folders(ctx)
+	if err != nil {
+		return err
+	}
+	exists := map[string]bool{}
+	for _, f := range fs {
+		exists[f.ID] = true
+	}
+	var errs []error
+	failed := map[string]bool{}
+	for _, id := range held {
+		if !exists[id] || failed[id] {
+			continue
+		}
+		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
+			errs = append(errs, err)
+			failed[id] = true
+		}
+	}
+	keep := func(ids []string) []string {
+		return slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return !failed[id] })
+	}
+	store.UpdateState(func(s *store.State) {
+		s.PausedFolders, s.GamePaused, s.ModHeld = keep(s.PausedFolders), keep(s.GamePaused), keep(s.ModHeld)
+	})
+	return errors.Join(errs...)
 }
 
 // scheduleResume registers the task that ends the pause at t.

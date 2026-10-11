@@ -889,6 +889,7 @@ func serveAPI(ctx context.Context, a *App) {
 // launcher that needs Syncer while its window isn't open. It exits after a
 // minute without connections, or right away when Syncer already serves it.
 func runAPI() {
+	defer logx.RecoverExit("launcher API helper")
 	ln, err := listenAPI(apiPipe)
 	if err != nil {
 		return // the window (or another helper) serves it

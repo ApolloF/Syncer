@@ -28,6 +28,7 @@ import (
 // shared metadata, then back up to Google Drive. No window is shown. The whole
 // process runs at background priority so it never competes with a game.
 func runBackground() {
+	defer logx.RecoverExit("background run")
 	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Minute)
 	defer cancel()
 	if err := winx.BackgroundProcess(); err != nil {
