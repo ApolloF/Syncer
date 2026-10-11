@@ -117,7 +117,7 @@ No. Syncthing works on its own between PCs that are on at the same time, and wit
 **How do I stop using it?**
 *Settings → Undo everything* stops all syncing on this PC and can also unlink your PCs, stop or uninstall Syncthing, and delete the backups. Then uninstall Syncer from *Windows Settings → Apps*. Your save files are never deleted.
 
-Uninstalling alone removes only Syncer's own files. Your settings and backups stay, and Syncthing keeps running and syncing your saves, so use *Undo everything* first if you want that to stop. Folders Syncer had paused are resumed when you uninstall.
+Uninstalling alone removes only Syncer's own files. Your settings and backups stay, and Syncthing keeps running and syncing your saves, so use *Undo everything* first if you want that to stop. Folders Syncer had paused are resumed when you uninstall, if Syncthing is running then.
 
 ## Limitations
 
