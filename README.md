@@ -25,7 +25,7 @@
 |---|---|
 | <img src="docs/images/syncer-restore.png" alt="Restore dialog listing restore points, each with the PC it came from"> | <img src="docs/images/syncer-devices.png" alt="Devices page with this PC's ID and two linked PCs"> |
 
-<sub>Screenshots use made-up games and PCs.</sub>
+<sub>Screenshots use mock data: made-up PCs and file sizes.</sub>
 
 ## Install
 
