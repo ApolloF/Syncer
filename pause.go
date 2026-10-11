@@ -46,7 +46,13 @@ func (a *App) Pause(until int64) error {
 		ctx, cancel := a.callCtx()
 		defer cancel()
 		if err := syncPause(ctx, c); err != nil {
+			// Not in effect (the folders couldn't be recorded or paused): don't
+			// leave the window saying "Paused until" for a pause that isn't.
 			logx.Printf("pause: %v", err)
+			if rerr := a.Resume(); rerr != nil {
+				logx.Printf("pause: undoing it: %v", rerr)
+			}
+			return errors.New("Couldn't pause right now. Try again in a moment.")
 		}
 	}
 	logx.Printf("paused syncing and backups until %s", t.Format("Mon 15:04"))
