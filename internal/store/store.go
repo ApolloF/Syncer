@@ -158,6 +158,8 @@ type State struct {
 	Update       *Update   `json:"update,omitempty"` // newest release seen
 	// Notified remembers which problems were already reported (key -> when).
 	Notified map[string]time.Time `json:"notified,omitempty"`
+	// NoticesDone are the one-time notices in Overview the user dismissed.
+	NoticesDone map[string]bool `json:"noticesDone,omitempty"`
 	// FolderBackups is when each folder (by id) was last backed up without errors.
 	FolderBackups map[string]time.Time `json:"folderBackups,omitempty"`
 	// BackgroundTask describes the background task as last registered, so it

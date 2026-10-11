@@ -458,6 +458,48 @@ func modsTick(ctx context.Context, c *syncthing.Client) bool {
 	return changed
 }
 
+// freezeMods is what a build without mods does with the mod folders it
+// still finds in Syncthing: it pauses them the way an open mod manager does
+// (recorded in ModHeld first, so a crash in between never leaves one paused
+// and forgotten), and nothing in this build resumes them. A build with mods
+// resumes them through modsTick. It reports whether it paused any.
+func freezeMods(ctx context.Context, c *syncthing.Client) bool {
+	if features.Mods {
+		return false
+	}
+	s := store.LoadSettings()
+	if len(s.Mods) == 0 {
+		return false
+	}
+	fs, err := c.Folders(ctx)
+	if err != nil {
+		return false
+	}
+	changed := false
+	for _, f := range fs {
+		if !isMod(s, f.ID) || f.Paused || !holdable(s, f.ID) {
+			continue
+		}
+		store.UpdateState(func(st *store.State) {
+			if !slices.Contains(st.ModHeld, f.ID) {
+				st.ModHeld = append(st.ModHeld, f.ID)
+			}
+		})
+		if err := c.PatchFolder(ctx, f.ID, map[string]any{"paused": true}); err != nil {
+			logx.Printf("mods: pause %s: %v", f.ID, err)
+			store.UpdateState(func(st *store.State) {
+				st.ModHeld = slices.DeleteFunc(st.ModHeld, func(id string) bool { return id == f.ID })
+			})
+			continue
+		}
+		changed = true
+	}
+	if changed {
+		logx.Printf("mod folders paused: this version of Syncer has no mod syncing")
+	}
+	return changed
+}
+
 // holdable reports whether modsTick pauses and resumes a mod folder: a PC
 // receiving deployed mods keeps its folder paused between updates, which
 // only an update resumes.

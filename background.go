@@ -73,6 +73,7 @@ func runBackground() {
 				inst := cachedInstalled()
 				pullNewer(ctx, func() bool { return playing(inst) })
 				modsTick(ctx, c)
+				freezeMods(ctx, c)
 			}
 		}
 	}

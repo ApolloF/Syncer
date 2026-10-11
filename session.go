@@ -11,6 +11,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/ApolloF/syncer/internal/backup"
+	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/mods"
@@ -174,7 +175,7 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 			// A mod folder waits while its mod manager is open (see
 			// modsTick), and a PC receiving deployed mods keeps its folder
 			// paused.
-			if isMod(s, id) && (!holdable(s, id) || mods.ManagerRunning(processPaths())) {
+			if isMod(s, id) && (!features.Mods || !holdable(s, id) || mods.ManagerRunning(processPaths())) {
 				if holdable(s, id) {
 					modHeld = append(modHeld, id)
 				}
