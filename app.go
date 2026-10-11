@@ -240,6 +240,8 @@ func (a *App) Overview() Overview {
 	if p, err := c.PendingDevices(ctx); err == nil {
 		o.Pending = len(p)
 	}
+	ws, _ := joinViews(ctx, c)
+	o.Pending += len(ws)
 	if fs, err := c.Folders(ctx); err == nil {
 		var bf []backup.Folder
 		for _, f := range fs {
@@ -341,6 +343,15 @@ type DevicesView struct {
 	QR      string        `json:"qr"`
 	Devices []DeviceView  `json:"devices"`
 	Pending []PendingView `json:"pending"`
+	// Requests are linked devices (not Syncer PCs) that offer Syncer's
+	// shared settings and wait to be allowed; Ignored are those turned down.
+	Requests []JoinView `json:"requests"`
+	Ignored  []JoinView `json:"ignored"`
+}
+
+type JoinView struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func (a *App) Devices() (DevicesView, error) {
@@ -394,7 +405,31 @@ func (a *App) Devices() (DevicesView, error) {
 			v.Pending = append(v.Pending, PendingView{ID: id, Name: pd.Name, Address: pd.Address, Time: pd.Time})
 		}
 	}
+	v.Requests, v.Ignored = joinViews(ctx, c)
 	return v, nil
+}
+
+// joinViews lists the linked devices that wait to be allowed as one of the
+// user's PCs, and those turned down. Ones no longer linked are left out.
+func joinViews(ctx context.Context, c *syncthing.Client) (waiting, ignored []JoinView) {
+	all, err := c.AllDevices(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	names := map[string]string{}
+	for _, d := range all {
+		names[d.DeviceID] = cmp.Or(d.Name, d.DeviceID[:7])
+	}
+	ws, is := meta.JoinRequests()
+	view := func(ids []string) (out []JoinView) {
+		for _, id := range ids {
+			if n, ok := names[id]; ok {
+				out = append(out, JoinView{ID: id, Name: n})
+			}
+		}
+		return out
+	}
+	return view(ws), view(is)
 }
 
 // normalizeID accepts IDs with or without dashes/spaces, any case.
@@ -416,7 +451,8 @@ func normalizeID(id string) (string, error) {
 	return strings.Join(parts, "-"), nil
 }
 
-// AddDevice pairs with another PC and shares every save folder with it.
+// AddDevice pairs with the PC whose ID the user entered and shares every
+// save folder with it.
 func (a *App) AddDevice(id, name string) error {
 	id, err := normalizeID(id)
 	if err != nil {
@@ -431,13 +467,61 @@ func (a *App) AddDevice(id, name string) error {
 	if st, err := c.Status(ctx); err == nil && st.MyID == id {
 		return errors.New("that's this PC's own ID — enter the ID shown on the other PC")
 	}
+	return a.pair(ctx, c, id, name)
+}
+
+// AcceptDevice pairs with a PC that asked to link, after the user compared
+// its ID with the one on their other PC. The name is the one the request
+// carried, not one the page passes in.
+func (a *App) AcceptDevice(id string) error {
+	id, err := normalizeID(id)
+	if err != nil {
+		return err
+	}
+	c, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	p, err := c.PendingDevices(ctx)
+	if err != nil {
+		return err
+	}
+	name, err := requestedName(p, id)
+	if err != nil {
+		return err
+	}
+	return a.pair(ctx, c, id, name)
+}
+
+// requestedName is the name the request from device id carries; it fails
+// unless the device really asked, so no other ID can be accepted.
+func requestedName(pending map[string]syncthing.PendingDevice, id string) (string, error) {
+	pd, ok := pending[id]
+	if !ok {
+		return "", errors.New("that request is gone: ask the other PC to link again")
+	}
+	return pd.Name, nil
+}
+
+// linkedDevice is the device Syncer adds for a PC the user chose on
+// purpose: by entering its ID, or by accepting its request.
+func linkedDevice(id, name string) syncthing.Device {
 	if name == "" {
 		name = "PC " + id[:7]
 	}
 	// Introducer lets a third PC join through any already linked PC, so the
-	// user never has to pair every PC with every other one.
-	if err := c.AddDevice(ctx, syncthing.Device{DeviceID: id, Name: name, Addresses: []string{"dynamic"},
-		Introducer: true}); err != nil {
+	// user never has to pair every PC with every other one. It is only set
+	// here, where the user chose the device.
+	return syncthing.Device{DeviceID: id, Name: name, Addresses: []string{"dynamic"}, Introducer: true}
+}
+
+// pair links a PC the user chose on purpose: by entering its ID, or by
+// accepting its request.
+func (a *App) pair(ctx context.Context, c *syncthing.Client, id, name string) error {
+	d := linkedDevice(id, name)
+	if err := c.AddDevice(ctx, d); err != nil {
 		return err
 	}
 	meta.MarkSyncerPC(id)
@@ -446,9 +530,34 @@ func (a *App) AddDevice(id, name string) error {
 	if _, err := meta.Reconcile(ctx, c); err != nil {
 		return err
 	}
-	logx.Printf("paired device %s (%s)", name, id[:7])
+	logx.Printf("paired device %s (%s)", d.Name, id[:7])
 	runtime.EventsEmit(a.ctx, "changed")
 	return nil
+}
+
+// AllowJoin makes a linked device that offered Syncer's shared settings one
+// of the user's PCs, and shares the saves with it.
+func (a *App) AllowJoin(id string) error {
+	c, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	meta.MarkSyncerPC(id)
+	if _, err := meta.Reconcile(ctx, c); err != nil {
+		return err
+	}
+	logx.Printf("allowed device %s as one of the user's PCs", id[:min(7, len(id))])
+	runtime.EventsEmit(a.ctx, "changed")
+	return nil
+}
+
+// IgnoreJoin turns down a linked device's request to join as one of the
+// user's PCs. It stays linked in Syncthing, for whatever else it is used for.
+func (a *App) IgnoreJoin(id string) {
+	meta.IgnorePC(id)
+	runtime.EventsEmit(a.ctx, "changed")
 }
 
 func (a *App) DismissDevice(id string) error {
