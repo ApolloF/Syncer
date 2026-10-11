@@ -802,7 +802,7 @@
     <span title={f.split ? 'Separate saves per account are always synced; share the game again under Accounts to change that' : 'Sync between PCs'}>
       <Toggle checked={f.sync} disabled={f.split} label="Sync between PCs" onchange={(v) => toggleSync(f, v)} />
     </span>
-    <span title="Back up to Google Drive">
+    <span title="Back up to your backup folder">
       <Toggle checked={f.backup} label="Back up" onchange={(v) => toggleBackup(f, v)} />
     </span>
   </div>
@@ -972,7 +972,7 @@
 <header class="row">
   <div class="grow">
     <h1>Games</h1>
-    <p class="muted">Sync shares a game's saves with your other PCs. Backup copies them to Google Drive.</p>
+    <p class="muted">Sync shares a game's saves with your other PCs. Backup copies them to your backup folder.</p>
   </div>
   <button class="btn" onclick={pickCustom}><Icon name="folder" size={16} /> Add folder</button>
 </header>
@@ -998,7 +998,7 @@
       <Icon name="refresh" size={16} class={scanning ? 'spin' : ''} />
     </button>
   {:else if cache.tab === 'other'}
-    <button class="btn icon" title="Check your other PCs and Google Drive again" disabled={loadingOthers || loadingAvailable}
+    <button class="btn icon" title="Check your other PCs and your backup again" disabled={loadingOthers || loadingAvailable}
       onclick={() => { loadAvailable(); loadOthers(true) }}>
       <Icon name="refresh" size={16} class={loadingOthers || loadingAvailable ? 'spin' : ''} />
     </button>
@@ -1097,13 +1097,13 @@
     </div>
   {/if}
 
-  <h2 class="section">In Google Drive</h2>
+  <h2 class="section">In your backup</h2>
   {#if othersErr}
     <div class="card notice row"><Icon name="alert" size={16} /><span class="grow">{othersErr}</span></div>
   {:else if !cache.others}
     <p class="faint hint">Looking…</p>
   {:else if others.length === 0}
-    <p class="faint hint">{query ? 'Nothing matches.' : 'Nothing: every backup in Google Drive belongs to one of your games.'}</p>
+    <p class="faint hint">{query ? 'Nothing matches.' : 'Nothing: every backup in your backup folder belongs to one of your games.'}</p>
   {:else}
     <div class="card flush list">
       {#each others as b (b.id)}
@@ -1190,7 +1190,7 @@
     <p class="mono ellipsis" title={f.path}>{f.path}</p>
     <p>Syncer stops syncing and backing up this folder on this PC and removes its sync markers. Your save files stay where they are; your other PCs keep their copy.</p>
     {#if removeInner.length}<p class="small">{names(removeInner)} keep{removeInner.length === 1 ? 's' : ''} syncing through {removeInner.length === 1 ? 'its own save folder' : 'their own save folders'}.</p>{/if}
-    <label class="chk"><input type="checkbox" bind:checked={deleteBackupToo} /> Also delete its Google Drive backup and history</label>
+    <label class="chk"><input type="checkbox" bind:checked={deleteBackupToo} /> Also delete its backup and history</label>
     {#if deleteBackupToo}<p class="err small">This can't be undone from Syncer.</p>{/if}
     {#if f.exists && !removeInner.length}
       <p class="small">Want the save files on this PC gone instead? <button class="linkbtn danger" onclick={() => openDelete(f)}>Delete the save files…</button></p>
@@ -1252,7 +1252,7 @@
 
 {#if bulkOpen}
   <Modal title="Back up games that aren't installed" onclose={() => { if (!bulkBusy) bulkOpen = false }}>
-    <p>Their saves are backed up to Google Drive from this PC, without syncing them to your other PCs.</p>
+    <p>Their saves are backed up to your backup folder from this PC, without syncing them to your other PCs.</p>
     <div class="picklist">
       {#each notInstalled as g (g.path)}
         <label class="chk pick" title={g.path}>
@@ -1298,7 +1298,7 @@
 {#if dropFor}
   {@const b = dropFor}
   <Modal title="Delete the backup of {b.label}?" onclose={() => { if (!dropping) dropFor = null }}>
-    <p>This deletes its backup{b.points ? ` and ${plural(b.points, 'restore point')}` : ''} from Google Drive. It can't be undone from Syncer.</p>
+    <p>This deletes its backup{b.points ? ` and ${plural(b.points, 'restore point')}` : ''} from your backup folder. It can't be undone from Syncer.</p>
     {#if b.host && !b.mine && isTime(b.backedUp) && Date.now() - new Date(b.backedUp).getTime() < 7 * 864e5}
       <p class="err small">{b.host} backed it up {ago(b.backedUp)}, so it may still be backing this game up and will start a new backup.</p>
     {/if}
@@ -1456,7 +1456,7 @@
 
 {#if backupAsk}
   <Modal title="Back up the deployed mods of {backupAsk.label}?" onclose={() => (backupAsk = null)}>
-    <p>Only the mod files are backed up to Google Drive: the files {backupAsk.modRole === 'source' ? 'Vortex deployed on this PC' : 'the last update applied here'}, not the game's own files.
+    <p>Only the mod files are backed up to your backup folder: the files {backupAsk.modRole === 'source' ? 'Vortex deployed on this PC' : 'the last update applied here'}, not the game's own files.
       {#if backupAsk.bytes}They take about {bytes(backupAsk.bytes)}.{/if}</p>
     <p class="faint small">Mods can usually be downloaded again, so this is mostly worth it for mods that are hard to get. The Vortex mods folder can be backed up instead.</p>
     {#snippet actions()}

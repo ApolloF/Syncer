@@ -155,4 +155,4 @@ Syncer is free software: you can redistribute it and/or modify it under the term
 
 Game save locations come from the [Ludusavi manifest](https://github.com/mtkennerly/ludusavi-manifest), which is built from [PCGamingWiki](https://www.pcgamingwiki.com) (CC BY-NC-SA 3.0). Syncer downloads it at runtime and doesn't include it. Syncing is done by [Syncthing](https://syncthing.net) (MPL-2.0), installed separately.
 
-Syncer is not affiliated with Valve, Google, the Syncthing Foundation or Nexus Mods. Syncthing is a trademark of the Syncthing Foundation; Google Drive is a trademark of Google LLC.
+Syncer is not affiliated with Valve, Google, Microsoft or the Syncthing Foundation. Syncthing is a trademark of the Syncthing Foundation; Google Drive is a trademark of Google LLC.
