@@ -117,7 +117,7 @@
       <ol class="muted small">
         <li>Install and open Syncer on the other PC.</li>
         <li>Paste its ID below — or paste this PC's ID over there.</li>
-        <li>Accept the request on the other PC. Done.</li>
+        <li>Choose Review on the other PC and check the ID matches. Done.</li>
       </ol>
       <div class="field">
         <input type="text" class="mono" placeholder="XXXXXXX-XXXXXXX-…" bind:value={id} spellcheck="false" />

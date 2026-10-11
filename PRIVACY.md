@@ -1,26 +1,18 @@
 # Privacy
 
-Last updated: 4 October 2026
+Last updated: 11 October 2026
 
-Syncer is a free Windows app that keeps your PC game saves in sync between your own PCs and backs them up to your own Google Drive. It runs on your PCs and has no server of its own. ApolloF, who publishes Syncer, receives no data from the app: no account, no telemetry, no crash reports.
+Syncer is a free Windows app that keeps your PC game saves in sync between your own PCs and backs them up to a folder you choose. It runs on your PCs and has no server of its own. ApolloF, who publishes Syncer, receives no data from the app: no account, no telemetry, no crash reports.
 
 This policy is also published at https://apps.apollof.nl/syncer/privacy/.
 
 ## Who is responsible
 
-Syncer is made and published by ApolloF in the Netherlands. Contact: me@apollof.nl. Because the app never sends your data to ApolloF, ApolloF doesn't hold or process it; the data stays on your PCs, in your Google Drive and with the services listed below. If you email ApolloF, ApolloF is the controller of that email (see Your rights).
+Syncer is made and published by ApolloF in the Netherlands. Contact: me@apollof.nl. Because the app never sends your data to ApolloF, ApolloF doesn't hold or process it; the data stays on your PCs, in your backup folder and with the services listed below. If you email ApolloF, ApolloF is the controller of that email (see Your rights).
 
-## Google sign-in and your Google data
+## Your backup folder
 
-Signing in with Google is optional: Syncer can also back up through Google Drive for desktop, or not at all. If you choose *Backup → Sign in with Google*, Syncer asks Google for one permission, `drive.file`: access only to the files and folders Syncer itself creates in your Google Drive (the `GameSaveBackup` folder). It can't see, read or change anything else in your Drive.
-
-- **What Syncer accesses:** the backup files it created, and your Google account's email address (read from Google Drive's account information).
-- **How it uses them:** only to upload your game save backups to that folder, download them to your other PCs, and show which account is signed in. The email address also lets Syncer notice when you switch to a different Google account, so one account's backup is never uploaded into another's.
-- **Where it is stored:** on your PC only. The sign-in token is stored in `%APPDATA%\Syncer\gdrive.token`, encrypted with Windows' data protection for your Windows account. The email address is kept with the token, in Syncer's local sync state and in its local log. A working copy of the backup is kept in `%LOCALAPPDATA%\Syncer\GoogleDrive`.
-- **Who it is shared with:** nobody. The token and your files go only between your PC and Google. ApolloF never receives them, and no person reads them.
-- **Revoking access:** *Sign out* deletes the token and asks Google to revoke Syncer's access. If Google can't be reached, Syncer says so; you can also remove access at any time at https://myaccount.google.com/permissions.
-
-Syncer's use and transfer to any other app of information received from Google APIs will adhere to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements. Data from Google APIs is not sold, not used for advertising, not used to determine credit-worthiness or for lending, and not used to develop, improve or train AI or machine learning models.
+The backup is optional. If you set one up, Syncer copies your saves into a `GameSaveBackup` folder inside a folder you choose on your PC: your Google Drive for desktop folder, a OneDrive folder, a NAS share or an external drive. Syncer only writes to that folder. It has no Google (or other cloud) sign-in of its own and never sends your saves to a cloud service itself; if the folder is kept by Google Drive for desktop, OneDrive or similar, that app uploads it under its own terms and privacy policy. Syncer doesn't see or store your account for it.
 
 ## Syncing between your PCs
 
@@ -30,7 +22,7 @@ If you let Syncer install Syncthing, it runs Windows Package Manager (winget), w
 
 ## Other network requests
 
-- With Google Drive for desktop, Syncer only writes files into your Drive folder on this PC; Google Drive for desktop does the upload, under Google's terms.
+- If your backup folder is kept by a cloud app such as Google Drive for desktop or OneDrive, Syncer only writes files into that folder on this PC; the app does the upload, under its own terms.
 - Syncer downloads the [Ludusavi manifest](https://github.com/mtkennerly/ludusavi-manifest) from GitHub to recognise games.
 - It checks GitHub once a day for a new Syncer release and downloads it from GitHub. You can turn the check off in Settings.
 - Before deleting expired restore points, Syncer checks the time with Google (an empty request to google.com), so a wrong PC clock can't delete them early.
@@ -38,11 +30,11 @@ If you let Syncer install Syncthing, it runs Windows Package Manager (winget), w
 
 ## What stays on your PC
 
-Settings, sync state and logs stay in `%APPDATA%\Syncer` and `%LOCALAPPDATA%\Syncer`. Logs can contain game names, folder paths and your Google account's email address. They leave your PC only if you send them to someone yourself, for example with a bug report.
+Settings, sync state and logs stay in `%APPDATA%\Syncer` and `%LOCALAPPDATA%\Syncer`. Logs, and `crash.log` if Syncer ever crashes, can contain game names and folder paths (with your Windows user name). They leave your PC only if you send them to someone yourself, for example with a bug report.
 
 ## Third parties Syncer contacts
 
-- **Google** (Drive API, sign-in, time check): https://policies.google.com/privacy
+- **Google** (time check only): https://policies.google.com/privacy
 - **Syncthing** discovery servers and relays: https://syncthing.net/
 - **GitHub** (game manifest, updates): https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement
 - **Microsoft** (winget, only when installing Syncthing): https://privacy.microsoft.com/privacystatement
@@ -53,13 +45,12 @@ Your data is never sold, rented, shared with advertisers or data brokers, or use
 
 ## How long data is kept
 
-Everything Syncer stores stays on your PCs and in your Drive until you delete it. Older versions in the backup are kept for the number of days you set (30 by default; restore points Syncer makes to protect your saves for a year) and then removed. ApolloF keeps nothing, because nothing is received.
+Everything Syncer stores stays on your PCs and in your backup folder until you delete it. Older versions in the backup are kept for the number of days you set (30 by default; restore points Syncer makes to protect your saves for a year) and then removed. ApolloF keeps nothing, because nothing is received.
 
 ## Deleting your data
 
-- *Sign out* on the Backup page deletes the token and asks Google to revoke Syncer's access.
 - *Settings → Undo everything* stops syncing and can unlink your PCs and delete the backups. Your save files are never deleted.
-- Uninstall Syncer from *Settings → Apps* in Windows. Uninstalling keeps `%APPDATA%\Syncer` and `%LOCALAPPDATA%\Syncer`; sign out first, then delete those folders to remove everything from the PC. Delete `My Drive\GameSaveBackup` in Google Drive to remove the backups.
+- Uninstall Syncer from *Settings → Apps* in Windows. Uninstalling removes only Syncer's own files: it keeps `%APPDATA%\Syncer`, `%LOCALAPPDATA%\Syncer` and your backups, and Syncthing keeps syncing, so use *Undo everything* first if you want that to stop. Delete those two folders to remove everything from the PC, and delete the `GameSaveBackup` folder in your backup folder to remove the backups.
 
 ## Your rights
 
@@ -67,7 +58,7 @@ Under the GDPR you can ask for access to, correction or deletion of personal dat
 
 ## Children
 
-Syncer isn't directed at children under 16 and doesn't knowingly collect data from anyone. Google's own age rules apply to Google accounts.
+Syncer isn't directed at children under 16 and doesn't knowingly collect data from anyone.
 
 ## Changes
 

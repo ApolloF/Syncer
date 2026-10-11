@@ -41,10 +41,14 @@ body:
   - type: dropdown
     id: backup
     attributes:
-      label: Backup method
+      label: Backup folder
+      description: Where does the backup go (Backup page)?
       options:
-        - Google Drive for desktop
-        - Sign in with Google (inside Syncer)
+        - Google Drive for desktop folder
+        - OneDrive folder
+        - NAS or network share
+        - External or local drive
+        - Other folder
         - No backup
   - type: input
     id: game
@@ -57,8 +61,8 @@ body:
     attributes:
       label: Log
       description: |
-        The last lines are under *Settings → Activity log → Show*. The full log is `%APPDATA%\Syncer\syncer.log` (and `syncer.log.1` for older lines); paste the part around the problem or attach the file.
-        Logs can contain game names, folder paths (with your Windows user name) and your Google account's email address. Remove what you don't want to share.
+        The last lines are under *Settings → Activity log → Show*. The full log is `%APPDATA%\Syncer\syncer.log` (and `syncer.log.1` for older lines). If Syncer crashed, also attach `%APPDATA%\Syncer\crash.log` from the same folder. Paste the part around the problem or attach the files.
+        Logs can contain game names and folder paths (with your Windows user name). Remove what you don't want to share.
       render: text
   - type: checkboxes
     id: checks
