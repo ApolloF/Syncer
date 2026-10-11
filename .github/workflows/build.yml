@@ -27,10 +27,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Wails + NSIS
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+
+      - name: Install NSIS
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
           choco install nsis --version 3.13.0 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Install frontend
@@ -46,10 +49,11 @@ jobs:
         run: npm test
 
       - name: Test
-        # Both builds: the public one (no tags) and the personal one (see internal/features).
-        run: |
-          go test ./...
-          go test -tags personal ./...
+        run: go test ./...
+
+      - name: Test (personal build)
+        # The personal build is tested too (see internal/features).
+        run: go test -tags personal ./...
 
       - name: Version
         # Release builds carry their tag (shown in the app, used by the update
