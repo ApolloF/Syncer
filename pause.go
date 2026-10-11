@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -131,13 +132,16 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 		// Remembered before pausing, so a crash in between can't leave a
 		// folder paused that nothing will ever resume.
 		if len(todo) > 0 {
-			store.UpdateState(func(st *store.State) {
+			err := store.UpdateState(func(st *store.State) {
 				for _, id := range todo {
 					if !slices.Contains(st.PausedFolders, id) {
 						st.PausedFolders = append(st.PausedFolders, id)
 					}
 				}
 			})
+			if err != nil {
+				return fmt.Errorf("not pausing folders that couldn't be remembered: %w", err)
+			}
 		}
 		var failed []string
 		for _, id := range todo {

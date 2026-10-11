@@ -293,8 +293,11 @@ func TestUpdateStateDoesNotSaveWhenTheFileCantBeRead(t *testing.T) {
 	statePath := filepath.Join(paths.AppDir(), "state.json")
 	before, _ := os.ReadFile(statePath)
 	restore := failReads(t)
-	UpdateState(func(s *State) { s.PausedFolders = nil })
+	err := UpdateState(func(s *State) { s.PausedFolders = nil })
 	restore()
+	if err == nil {
+		t.Error("UpdateState reported no failure")
+	}
 	if after, _ := os.ReadFile(statePath); string(after) != string(before) {
 		t.Errorf("state.json changed: %q", after)
 	}

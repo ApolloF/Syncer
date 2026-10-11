@@ -381,20 +381,25 @@ func SaveState(st State) error { return save("state.json", st) }
 
 var stateMu sync.Mutex
 
-// UpdateState applies fn to the stored state under a lock and saves.
-func UpdateState(fn func(*State)) {
+// UpdateState applies fn to the stored state under a lock and saves. It
+// returns an error if the state couldn't be read or saved, so callers that
+// must not go on without the change (recording before pausing a folder) can
+// tell.
+func UpdateState(fn func(*State)) error {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	defer fileLock("state")()
 	st, err := loadState(true)
 	if err != nil {
 		logx.Printf("not updating state.json: %v", err)
-		return
+		return err
 	}
 	fn(&st)
 	if err := SaveState(st); err != nil {
 		logx.Printf("saving state.json: %v", err)
+		return err
 	}
+	return nil
 }
 
 // FileLock takes the named cross-process lock (see fileLock).

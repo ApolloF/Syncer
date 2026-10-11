@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -175,5 +177,33 @@ func TestGameHoldKeepsTrackingFolderThatPausedDespiteAnError(t *testing.T) {
 	_ = holdSyncWith(context.Background(), pausingServer(t, "a"), true)
 	if got := store.LoadState().GamePaused; len(got) != 1 || got[0] != "a" {
 		t.Errorf("a paused folder must stay remembered, got %v", got)
+	}
+}
+
+// unreadableState makes state.json unreadable (a folder stands in its place).
+func unreadableState(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(paths.AppDir(), "state.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNoFolderIsPausedWhenItCantBeRemembered(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	if _, err := store.UpdateSettings(func(s *store.Settings) { s.PausedUntil = time.Now().Add(time.Hour) }); err != nil {
+		t.Fatal(err)
+	}
+	unreadableState(t)
+	c, patched, mu := pauseServer(t, "a")
+	if err := syncPause(context.Background(), c); err == nil {
+		t.Error("syncPause: want an error")
+	}
+	if err := holdSyncWith(context.Background(), c, true); err == nil {
+		t.Error("holdSyncWith: want an error")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(patched) != 0 {
+		t.Errorf("paused without a record: %v", patched)
 	}
 }

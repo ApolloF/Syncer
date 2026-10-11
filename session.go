@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -219,14 +220,16 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 	}
 	// Remembered before pausing, so a crash in between can't leave a folder
 	// paused that nothing will ever resume.
-	store.UpdateState(func(st *store.State) {
+	if err := store.UpdateState(func(st *store.State) {
 		for _, id := range now {
 			if !slices.Contains(st.GamePaused, id) {
 				st.GamePaused = append(st.GamePaused, id)
 			}
 		}
 		st.GameHeld = time.Now()
-	})
+	}); err != nil {
+		return fmt.Errorf("not pausing folders that couldn't be remembered: %w", err)
+	}
 	var failed []string
 	for _, id := range toPause {
 		if err := c.PatchFolder(ctx, id, map[string]any{"paused": true}); err != nil {
