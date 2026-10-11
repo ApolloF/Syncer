@@ -3,7 +3,9 @@ package meta
 import (
 	"cmp"
 	"context"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -63,19 +65,46 @@ func knownPCs() map[string]bool {
 	return m
 }
 
-// MarkSyncerPC records that device runs Syncer (it was paired in Syncer).
+// MarkSyncerPC records that device runs Syncer and is trusted: the user
+// paired it in Syncer or allowed it.
 func MarkSyncerPC(id string) {
 	store.UpdateState(func(st *store.State) {
 		if st.SyncerPCs == nil {
 			st.SyncerPCs = map[string]bool{}
 		}
 		st.SyncerPCs[id] = true
+		delete(st.JoinRequests, id)
+		delete(st.IgnoredPCs, id)
 	})
 }
 
-// ForgetSyncerPC drops device from the PCs known to run Syncer.
+// ForgetSyncerPC drops device from the PCs known to run Syncer, and any
+// request or refusal about it.
 func ForgetSyncerPC(id string) {
-	store.UpdateState(func(st *store.State) { delete(st.SyncerPCs, id) })
+	store.UpdateState(func(st *store.State) {
+		delete(st.SyncerPCs, id)
+		delete(st.JoinRequests, id)
+		delete(st.IgnoredPCs, id)
+	})
+}
+
+// IgnorePC turns down a device's request to join as one of the user's PCs,
+// until the user links it on purpose.
+func IgnorePC(id string) {
+	store.UpdateState(func(st *store.State) {
+		if st.IgnoredPCs == nil {
+			st.IgnoredPCs = map[string]bool{}
+		}
+		st.IgnoredPCs[id] = true
+		delete(st.JoinRequests, id)
+	})
+}
+
+// JoinRequests lists the linked devices waiting to be allowed as one of the
+// user's PCs, and those that were ignored.
+func JoinRequests() (waiting, ignored []string) {
+	st := store.LoadState()
+	return slices.Sorted(maps.Keys(st.JoinRequests)), slices.Sorted(maps.Keys(st.IgnoredPCs))
 }
 
 // MarkOwnFolder records that Syncer added folder id.
@@ -89,32 +118,75 @@ func MarkOwnFolder(id string) {
 	})
 }
 
+// pcVerdict is what to make of a linked device that isn't known to run
+// Syncer yet.
+type pcVerdict int
+
+const (
+	pcStranger pcVerdict = iota // not a Syncer PC, as far as is known
+	pcTrusted
+	pcWaiting // offers the shared settings: the user decides
+)
+
+// judgePC decides about a linked device that isn't a known Syncer PC. One
+// that already syncs the shared settings was given them by Syncer, so it is
+// trusted: that is also how a third PC a trusted PC introduced through the
+// shared settings folder ends up, as Syncthing adds it to that folder here.
+// A device introduced through any other folder is not trusted for that: it
+// may belong to someone else. Any other device that offers the shared
+// settings only gets to ask, and must not get the saves because of a folder
+// name. accepts is asked only when needed.
+func judgePC(id string, ignored map[string]bool, offers bool, accepts func() bool) pcVerdict {
+	switch {
+	case ignored[id]:
+		return pcStranger
+	case offers:
+		return pcWaiting
+	case accepts():
+		return pcTrusted
+	}
+	return pcStranger
+}
+
 // syncerPCs returns the linked devices that run Syncer (me left out), and
-// records the ones newly found: a device that offers the shared metadata
-// folder, or syncs it, runs Syncer.
+// records the ones newly found and the ones that ask to be (see judgePC).
 func syncerPCs(ctx context.Context, c *syncthing.Client, me string, ds []syncthing.Device) map[string]bool {
 	known := knownPCs()
+	st := store.LoadState()
 	pending, _ := c.PendingFolders(ctx)
 	pcs := map[string]bool{}
-	var found []string
+	var found, stale []string
+	waiting := map[string]bool{}
+	linked := map[string]bool{}
 	for _, d := range ds {
 		id := d.DeviceID
+		linked[id] = true
 		if id == me {
 			continue
 		}
 		if !known[id] {
 			_, offers := pending[FolderID].OfferedBy[id]
-			if !offers {
+			accepts := func() bool {
 				comp, err := c.FolderCompletion(ctx, FolderID, id)
-				if err != nil || !comp.Accepted() {
-					continue
-				}
+				return err == nil && comp.Accepted()
+			}
+			switch judgePC(id, st.IgnoredPCs, offers, accepts) {
+			case pcWaiting:
+				waiting[id] = true
+				continue
+			case pcStranger:
+				continue
 			}
 			found = append(found, id)
 		}
 		pcs[id] = true
 	}
-	if len(found) > 0 {
+	for id := range st.IgnoredPCs {
+		if !linked[id] {
+			stale = append(stale, id)
+		}
+	}
+	if len(found) > 0 || len(stale) > 0 || !maps.Equal(waiting, st.JoinRequests) {
 		store.UpdateState(func(st *store.State) {
 			if st.SyncerPCs == nil {
 				st.SyncerPCs = map[string]bool{}
@@ -122,6 +194,20 @@ func syncerPCs(ctx context.Context, c *syncthing.Client, me string, ds []syncthi
 			for _, id := range found {
 				st.SyncerPCs[id] = true
 				logx.Printf("meta: %s runs Syncer", id[:min(7, len(id))])
+			}
+			for _, id := range stale {
+				delete(st.IgnoredPCs, id)
+			}
+			// The user may have allowed or ignored a device since the
+			// state was read above.
+			st.JoinRequests = nil
+			for id := range waiting {
+				if !st.IgnoredPCs[id] && !st.SyncerPCs[id] {
+					if st.JoinRequests == nil {
+						st.JoinRequests = map[string]bool{}
+					}
+					st.JoinRequests[id] = true
+				}
 			}
 		})
 	}

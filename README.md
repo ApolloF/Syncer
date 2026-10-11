@@ -40,7 +40,7 @@ Syncer isn't code-signed yet, so Windows SmartScreen may warn the first time: cl
 
 1. Install Syncer on the second PC.
 2. On one PC, open **Devices** and paste the other PC's ID.
-3. Accept the request that appears on the other PC.
+3. On the other PC, choose **Review** on the request, check that the ID matches the one on the first PC, and link.
 
 Every synced game then shows up on the other PC at the right local path, even if the user name or Documents location differs.
 

@@ -238,8 +238,9 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 	case call == "GET /rest/cluster/pending/folders":
 		reply(f.pending)
 	case call == "GET /rest/db/completion":
+		// Like Syncthing, say nothing of a device the folder isn't shared with.
 		rs, ok := f.remote[q.Get("folder")+"/"+q.Get("device")]
-		if !ok {
+		if !ok || !slices.ContainsFunc(f.folders[q.Get("folder")].Devices, func(d syncthing.FolderDevice) bool { return d.DeviceID == q.Get("device") }) {
 			rs = syncthing.RemoteUnknown
 		}
 		reply(map[string]any{"completion": 100, "remoteState": rs})

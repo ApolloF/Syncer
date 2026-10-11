@@ -559,6 +559,20 @@ export namespace main {
 	        this.versionGap = source["versionGap"];
 	    }
 	}
+	export class JoinView {
+	    id: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JoinView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	    }
+	}
 	export class PendingView {
 	    id: string;
 	    name: string;
@@ -602,6 +616,8 @@ export namespace main {
 	    qr: string;
 	    devices: DeviceView[];
 	    pending: PendingView[];
+	    requests: JoinView[];
+	    ignored: JoinView[];
 	
 	    static createFrom(source: any = {}) {
 	        return new DevicesView(source);
@@ -614,6 +630,8 @@ export namespace main {
 	        this.qr = source["qr"];
 	        this.devices = this.convertValues(source["devices"], DeviceView);
 	        this.pending = this.convertValues(source["pending"], PendingView);
+	        this.requests = this.convertValues(source["requests"], JoinView);
+	        this.ignored = this.convertValues(source["ignored"], JoinView);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -905,6 +923,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class ModPreview {
 	    id: string;
 	    label: string;

@@ -191,6 +191,11 @@ type State struct {
 	// SyncerPCs are the linked devices known to run Syncer (by device id).
 	// Syncthing may be linked to other devices too, for other things.
 	SyncerPCs map[string]bool `json:"syncerPCs,omitempty"`
+	// JoinRequests are linked devices that offer Syncer's shared settings
+	// and wait for the user to allow them as one of their PCs; IgnoredPCs
+	// are those the user turned down.
+	JoinRequests map[string]bool `json:"joinRequests,omitempty"`
+	IgnoredPCs   map[string]bool `json:"ignoredPCs,omitempty"`
 	// SyncerFolders and OtherFolders are the Syncthing folders (by id)
 	// found to be Syncer's, or something else's (see meta.Reconcile).
 	SyncerFolders map[string]bool `json:"syncerFolders,omitempty"`
