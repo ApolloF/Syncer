@@ -242,7 +242,7 @@ export function installMock() {
   } satisfies Plain<main.Overview>)
 
   const devices = main.DevicesView.createFrom({
-    myID, myName: me, qr: '', pending: [],
+    myID, myName: me, qr: '', pending: [], requests: [], ignored: [],
     devices: [
       { id: 'LP4XQ2M-ABCDEF1-GHIJKL2-MNOPQR3-STUVWX4-YZ12345-6789ABC-DEFGHJK', name: 'Laptop', connected: true, address: '192.168.1.24:22000', via: 'lan', completion: 100, needBytes: 0, version: 'v1.0.0', versionGap: '' },
       { id: 'LR9ZYT3-KLMNOP1-QRSTUV2-WXYZAB3-CDEFGH4-JKLMNP5-QRSTUV6-WXYZ234', name: 'Living-room PC', connected: true, address: '192.168.1.31:22000', via: 'lan', completion: 100, needBytes: 0, version: 'v1.0.0', versionGap: '' },

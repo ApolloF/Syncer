@@ -4,7 +4,8 @@
   import Modal from '../lib/Modal.svelte'
   import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
   import { bytes } from '../lib/fmt'
-  import { Devices, AddDevice, DismissDevice, RemoveDevice, CopyText, PasteText } from '../../wailsjs/go/main/App'
+  import { idGroups, selfName } from '../lib/devices'
+  import { Devices, AddDevice, DismissDevice, RemoveDevice, AcceptDevice, AllowJoin, IgnoreJoin, CopyText, PasteText } from '../../wailsjs/go/main/App'
   import type { main } from '../../wailsjs/go/models'
 
   // How a linked PC is reached (DeviceView.via).
@@ -16,6 +17,7 @@
   let linking = $state(false)
   let removeFor = $state<main.DeviceView | null>(null)
   let showQR = $state(false)
+  let acceptFor = $state<main.PendingView | null>(null)
 
   async function load() {
     try { v = await Devices() } catch (e) { if (ui.overview?.syncthing.running) fail(e) }
@@ -29,6 +31,23 @@
       load(); refresh()
     }
     linking = false
+  }
+
+  async function accept() {
+    const p = acceptFor!
+    acceptFor = null
+    linking = true
+    if (await attempt(() => AcceptDevice(p.id), 'Linked. Saves will start syncing in a moment.')) { load(); refresh() }
+    linking = false
+  }
+
+  async function allow(d: main.JoinView) {
+    if (await attempt(() => AllowJoin(d.id), `${d.name} can sync your saves now`)) { load(); refresh() }
+  }
+
+  async function ignore(d: main.JoinView) {
+    await attempt(async () => IgnoreJoin(d.id))
+    load(); refresh()
   }
 
   async function paste() {
@@ -57,11 +76,23 @@
     <div class="card request" transition:slide={{ duration: 160 }}>
       <div class="ic"><Icon name="devices" /></div>
       <div class="grow">
-        <h2>{p.name || 'A PC'} wants to link</h2>
+        <h2>{selfName(p.name)} wants to link</h2>
         <p class="mono faint ellipsis">{p.id}</p>
       </div>
       <button class="btn ghost" onclick={async () => { await attempt(() => DismissDevice(p.id)); load(); refresh() }}>Ignore</button>
-      <button class="btn primary" disabled={linking} onclick={() => link(p.id, p.name)}>Accept</button>
+      <button class="btn primary" disabled={linking} onclick={() => (acceptFor = p)}>Review</button>
+    </div>
+  {/each}
+
+  {#each v?.requests ?? [] as d (d.id)}
+    <div class="card request" transition:slide={{ duration: 160 }}>
+      <div class="ic"><Icon name="devices" /></div>
+      <div class="grow">
+        <h2>{d.name} wants to join as one of your PCs</h2>
+        <p class="muted small">It is linked to Syncthing here and offers Syncer's settings. Allow it only if it is your own PC running Syncer: it gets all your game saves.</p>
+      </div>
+      <button class="btn ghost" onclick={() => ignore(d)}>Ignore</button>
+      <button class="btn primary" onclick={() => allow(d)}>Allow</button>
     </div>
   {/each}
 
@@ -102,6 +133,21 @@
     </div>
   </section>
 
+  {#if v?.ignored?.length}
+    <h2 class="section">Ignored</h2>
+    <div class="card flush list">
+      {#each v.ignored as d (d.id)}
+        <div class="item">
+          <div class="grow">
+            <div class="name">{d.name}</div>
+            <div class="faint small">Asked to join as one of your PCs. Syncer leaves it alone.</div>
+          </div>
+          <button class="btn" onclick={() => allow(d)}>Allow</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if v?.devices?.length}
     <h2 class="section">Linked PCs</h2>
     <div class="card flush list">
@@ -132,6 +178,21 @@
     <img class="qr" src={v.qr} alt="QR code of device ID" />
     <p class="mono center selectable">{v.myID}</p>
     {#snippet actions()}<button class="btn" onclick={() => (showQR = false)}>Close</button>{/snippet}
+  </Modal>
+{/if}
+
+{#if acceptFor}
+  <Modal title="Link this PC?" onclose={() => (acceptFor = null)}>
+    <p>A PC asks to link with yours and get all your game saves. The name it gives itself is <strong>{selfName(acceptFor.name)}</strong>, but anyone can pick any name.</p>
+    <p>Open Devices on your other PC and check that its ID is exactly this one:</p>
+    <p class="idbox selectable">
+      {#each idGroups(acceptFor.id) as g, i}<span>{g}</span>{#if i < idGroups(acceptFor.id).length - 1}<span class="sep">-</span>{/if}{/each}
+    </p>
+    <p>If it differs, or you don't know this PC, choose Cancel.</p>
+    {#snippet actions()}
+      <button class="btn" onclick={() => (acceptFor = null)}>Cancel</button>
+      <button class="btn primary" onclick={accept}>The ID matches: link</button>
+    {/snippet}
   </Modal>
 {/if}
 
