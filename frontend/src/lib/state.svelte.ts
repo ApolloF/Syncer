@@ -1,8 +1,9 @@
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import { Overview, Accounts } from '../../wailsjs/go/main/App'
+import { Overview, Accounts, WindowHidden } from '../../wailsjs/go/main/App'
 import type { main } from '../../wailsjs/go/models'
 import { err } from './fmt'
 import { issueView } from './features'
+import { createRefresher } from './refresher'
 
 export type View = 'overview' | 'games' | 'mods' | 'accounts' | 'devices' | 'backup' | 'settings'
 
@@ -71,16 +72,20 @@ export function applyTheme(t: string) {
   else delete root.dataset.theme
 }
 
-let pending: ReturnType<typeof setTimeout> | null = null
+// Hidden in the tray, the UI asks the backend nothing (see refresher.ts).
+const refresher = createRefresher(changed => {
+  if (changed) ui.tick++
+  refresh()
+})
 
 export function init() {
   refresh()
-  EventsOn('changed', () => {
-    if (pending) return
-    pending = setTimeout(() => { pending = null; ui.tick++; refresh() }, 400)
-  })
+  EventsOn('changed', refresher.changed)
+  let told = false // a window event is newer than WindowHidden's answer
+  EventsOn('window', (shown: boolean) => { told = true; refresher.shown(shown) })
   EventsOn('toast', (t: string) => toast(t, 'ok'))
   EventsOn('toast:error', (t: string) => toast(t, 'err'))
   EventsOn('games:added', () => { ui.gamesAdded++ })
-  setInterval(refresh, 15000)
+  refresher.start()
+  WindowHidden().then(h => { if (h && !told) refresher.shown(false) }, () => {})
 }
