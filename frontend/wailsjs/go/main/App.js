@@ -341,3 +341,7 @@ export function UseModSettingsEverywhere() {
 export function VortexShares() {
   return window['go']['main']['App']['VortexShares']();
 }
+
+export function WindowHidden() {
+  return window['go']['main']['App']['WindowHidden']();
+}

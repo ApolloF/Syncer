@@ -176,3 +176,5 @@ export function UseDriveApp():Promise<void>;
 export function UseModSettingsEverywhere():Promise<void>;
 
 export function VortexShares():Promise<Array<main.VortexShareView>>;
+
+export function WindowHidden():Promise<boolean>;

@@ -52,6 +52,9 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.applyTheme(store.LoadSettings().Theme)
 	a.startTray()
+	if a.hidden {
+		a.trimSoon(trimAfterStartup)
+	}
 	go func() {
 		defer logx.Recover("startup")
 		ensureAutostart(store.LoadSettings().StartAtLogin)

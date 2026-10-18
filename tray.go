@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/store"
+	"github.com/ApolloF/syncer/internal/winx"
 )
 
 //go:embed build/tray.ico
@@ -189,6 +191,15 @@ func (a *App) showWindow() {
 	wruntime.WindowShow(a.ctx)
 	wruntime.WindowSetAlwaysOnTop(a.ctx, true) // bring to front…
 	wruntime.WindowSetAlwaysOnTop(a.ctx, false)
+	wruntime.EventsEmit(a.ctx, "window", true)
+}
+
+// WindowHidden reports whether only the tray icon shows. The UI stops
+// refreshing while hidden and catches up on the "window" event.
+func (a *App) WindowHidden() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.hidden
 }
 
 // quit really exits, even with "keep running in the tray" on.
@@ -212,7 +223,26 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	a.mu.Lock()
 	a.hidden = true
 	a.mu.Unlock()
+	wruntime.EventsEmit(ctx, "window", false)
+	a.trimSoon(trimAfterHide)
 	return true
+}
+
+const (
+	trimAfterHide    = 5 * time.Second  // let the window finish hiding
+	trimAfterStartup = 45 * time.Second // let the startup work settle
+)
+
+// trimSoon gives the memory a hidden window doesn't need back to Windows (see
+// winx.TrimMemory), unless the window shows again in the meantime.
+func (a *App) trimSoon(after time.Duration) {
+	time.AfterFunc(after, func() {
+		defer logx.Recover("trim memory")
+		if a.WindowHidden() {
+			debug.FreeOSMemory()
+			winx.TrimMemory()
+		}
+	})
 }
 
 func (a *App) shutdown(context.Context) { systray.Quit() }
