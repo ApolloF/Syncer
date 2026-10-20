@@ -12,7 +12,7 @@ Windows desktop app that syncs game saves between a user's PCs (via a bundled/lo
 - Install: `cd frontend && npm install` (Wails also runs this on build)
 - Dev: `wails dev`
 - Build: `wails build` → `build/bin/Syncer.exe` (`-nsis` for the installer). This is the public release: no mods, Google sign-in or launcher integration.
-- Personal build: `wails build -tags personal` (the owner's build with all of those; it never installs the public release over itself). Dev with it: `wails dev -tags personal`.
+- Personal build: `scripts/build-personal.ps1` (runs `wails build -tags personal -nsis` with the Google client from `.env.personal`; the owner's build with all of those; it never installs the public release over itself). Dev with it: `wails dev -tags personal`.
 - Typecheck: `cd frontend && npm run check` (svelte-check)
 - Test: `go test ./...` and `go test -tags personal ./...` and `cd frontend && npm test` (Vitest)
 - Full gate before a PR (what CI runs): the check command below without `-short`, plus `wails build`

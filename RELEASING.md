@@ -17,3 +17,5 @@ If a published release is bad, mark it as a draft again (or delete it) so the up
 ## Personal build
 
 `wails build -tags personal` makes the maintainer's build (see [CONTRIBUTING.md](CONTRIBUTING.md#builds-public-vs-personal)). It is built locally, with the Google client passed through `-ldflags`, and is never published or attached to a release. CI only builds the public one.
+
+`scripts/build-personal.ps1` builds it with its installer into `build\bin`. It reads the Google client from `.env.personal` at the repo root (gitignored; `GDRIVE_CLIENT_ID=…` and `GDRIVE_CLIENT_SECRET=…` on their own lines) or from environment variables of the same names, and stamps the version as the last tag plus the commit (`v1.0.0+personal.3a79b1e`). The personal build doesn't update itself: when it says a new release is out, pull `main` and run the script again. The exe contains the Google client, so don't share it.
