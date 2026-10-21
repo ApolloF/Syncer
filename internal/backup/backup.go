@@ -666,10 +666,14 @@ func copyHistory(ctx context.Context, target, from, to string, mirror bool) erro
 				}
 				return err
 			}
-			if !e.Type().IsRegular() || strings.HasSuffix(p, tmpSuffix) {
+			if !e.Type().IsRegular() {
 				return nil
 			}
-			rel, _ := filepath.Rel(src, p)
+			name, ok := copyName(p, strings.HasPrefix(d[0], VersionsDir))
+			if !ok {
+				return nil
+			}
+			rel, _ := filepath.Rel(src, name)
 			out := filepath.Join(dst, rel)
 			if _, err := os.Lstat(out); err == nil {
 				return nil

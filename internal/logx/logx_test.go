@@ -2,9 +2,12 @@ package logx
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ApolloF/syncer/internal/paths"
 )
 
 func TestRunRestartsAfterPanic(t *testing.T) {
@@ -44,5 +47,18 @@ func TestRecoverLogsPanic(t *testing.T) {
 	b, _ := os.ReadFile(Path())
 	if !strings.Contains(string(b), "panic in a goroutine: oops") {
 		t.Error("the panic was not logged")
+	}
+}
+
+func TestTestsNeverWriteToTheRealLog(t *testing.T) {
+	real := filepath.Join(paths.AppDir(), "syncer.log")
+	before, beforeErr := os.Stat(real)
+	if Path() == real || CrashPath() == filepath.Join(paths.AppDir(), "crash.log") {
+		t.Fatalf("tests log to the real files: %s, %s", Path(), CrashPath())
+	}
+	Printf("logx test line")
+	after, afterErr := os.Stat(real)
+	if (beforeErr == nil) != (afterErr == nil) || (beforeErr == nil && (after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()))) {
+		t.Error("the real syncer.log changed")
 	}
 }
