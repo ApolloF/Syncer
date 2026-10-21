@@ -24,7 +24,20 @@ Thanks for helping. Syncer is a one-person project, so small, focused changes ge
 4. Add or update tests for behaviour you change (`*_test.go` next to the Go code, `*.test.ts` next to frontend helpers in `frontend/src/lib`).
 5. Try the change in the real app with `wails dev`. Anything that touches syncing, backups or restores must never delete or overwrite a save without a restore point.
 
-Requirements and the project layout are in the [README](README.md#develop).
+## Build and layout
+
+Requirements: Go 1.26+, Node 22+, [Wails v2](https://wails.io) (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0`).
+
+```bash
+wails dev          # live-reloading app
+go test ./...      # backend tests
+go test -tags personal ./...   # the same tests for the personal build
+wails build        # build/bin/Syncer.exe
+```
+
+`wails build` makes the public release: no mods, no Google sign-in and no launcher integration, switched off at compile time (see [below](#builds-public-vs-personal)). `wails build -tags personal` makes the maintainer's personal build with all of those on; it never installs the public release over itself. Google sign-in in a personal build needs a Google OAuth client id and secret passed at build time (`-ldflags "-X main.gdriveClientID=… -X main.gdriveClientSecret=…"`); without them it is hidden. Releases from CI are always the public build.
+
+The backend lives in `internal/`: `syncthing` (REST client), `meta` (cross-PC folder sharing), `discover` (manifest, scan, installed games), `backup` (mirror/versions/restore), `gdrive` (Google sign-in and Drive sync, personal build only), `features` (public/personal switches), `tasks` (Task Scheduler), `paths` (portable paths, sync safety rules) and `winx` (Windows priority, full-screen and foreground checks). The Svelte 5 frontend is in `frontend/src`. Draft winget and Scoop manifests are in [packaging/](packaging/).
 
 ## Builds: public vs personal
 

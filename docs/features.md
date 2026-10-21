@@ -35,6 +35,33 @@ The [README](../README.md) has the short version. This page describes each featu
 - **Deletes saves only when you really mean it.** From a game's *Remove* dialog, *Delete the save files…* asks you to type the game's name. It then stops syncing the game on this PC (your other PCs keep their copy), backs it up one last time (nothing is deleted if that fails) and moves the save folder to the Recycle Bin. The game stays in your games as *Backup only*, so you can restore it later.
 - **Light and dark mode.** It follows your Windows setting (you can override it), and uses the Mica backdrop on Windows 11.
 
+## How it works
+
+Syncer is a small desktop app built on two tools that already work well:
+
+- **Syncthing between your PCs.** Syncthing copies saves straight from PC to PC, end-to-end encrypted, with no account and no cloud storage in between. Your PCs don't need to be on the same network: when they can't reach each other directly, Syncthing's public relays pass the encrypted data along. Syncer installs and drives your own Syncthing; it doesn't bundle it.
+- **A folder as the backup.** Syncer copies your saves into a `GameSaveBackup` folder inside the folder you chose (with Google Drive for desktop, `My Drive\GameSaveBackup`). Only changed files are copied, and replaced or deleted files are kept as restore points for 30 days by default. Syncer only writes into that folder on your PC; your cloud app (Google Drive for desktop, OneDrive, …) does the upload. Syncer has no Google account connection of its own.
+
+```
+ PC A                                  PC B
+ ┌─────────────┐   Syncthing (P2P)   ┌─────────────┐
+ │ save folders│◄───────────────────►│ save folders│
+ │ syncer-meta │◄───────────────────►│ syncer-meta │  ← each PC's folder list, portable paths
+ └──────┬──────┘                     └─────────────┘
+        │ Syncer.exe --background (Task Scheduler)
+        ▼
+ <backup folder>\GameSaveBackup\<game>\…      ← mirror
+ <backup folder>\GameSaveBackup\.versions\…   ← replaced/deleted files, thinned, pruned after N days
+        │ your cloud app, e.g. Google Drive for desktop
+        ▼
+   the cloud, a NAS or an external drive
+```
+
+Syncthing only syncs while both PCs are on. The backup covers the rest: when the PC you played on last is switched off, Syncer can take the newer saves from its backup, but only when nothing on this PC can get lost.
+
+Save locations come from the [Ludusavi manifest](https://github.com/mtkennerly/ludusavi-manifest), which is built from [PCGamingWiki](https://www.pcgamingwiki.com). A scheduled task (`\Syncer-Background`) runs the sync and backup at logon and every few hours, also when the window is closed.
+
+
 ## Under the hood
 
 A game with separate saves per account is one Syncthing folder per account (`<game>.u-<account>`), each synced between all PCs. Which one sits at the game's save folder is up to each PC's active account; the others are kept in `%LOCALAPPDATA%\SyncerAccounts` (or `<drive>\SyncerAccounts` when the saves are on another drive). Splits and merges are shared through `syncer-meta` like the folder lists, and every PC carries them out itself; a PC whose Syncer is too old to understand them holds splitting back until it's updated.
