@@ -10,33 +10,33 @@
   import {
     CreateAccount, EditAccount, DeleteAccount, SwitchAccount, MergeGame, RetryAccountChange, Folders, SaveOwners, OpenPath,
     Conflicts, ResolveConflict,
-  } from '../../wailsjs/go/main/App'
-  import type { main, conflict } from '../../wailsjs/go/models'
+  } from '../../wailsjs/go/app/App'
+  import type { app, conflict } from '../../wailsjs/go/models'
 
   const colors = ['#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6', '#64748b']
 
   const v = $derived(ui.accounts)
   const accs = $derived(v?.accounts ?? [])
 
-  let shared = $state<main.FolderView[]>([])
+  let shared = $state<app.FolderView[]>([])
   let open = $state<Record<string, boolean>>({})
-  let owners = $state<Record<string, main.SaveFile[] | null>>({})
+  let owners = $state<Record<string, app.SaveFile[] | null>>({})
 
   let newName = $state('')
   let newColor = $state(colors[0])
-  let editFor = $state<main.AccountView | null>(null)
+  let editFor = $state<app.AccountView | null>(null)
   let editName = $state('')
   let editColor = $state('')
-  let deleteFor = $state<main.AccountView | null>(null)
-  let mergeFor = $state<main.SplitView | null>(null)
+  let deleteFor = $state<app.AccountView | null>(null)
+  let mergeFor = $state<app.SplitView | null>(null)
   let winner = $state('')
-  let splitFor = $state<main.FolderView | null>(null)
+  let splitFor = $state<app.FolderView | null>(null)
   let busy = $state('')
 
   // Two versions of a save in one account's own saves (any account's).
-  let conflictsFor = $state<main.SplitSave | null>(null)
+  let conflictsFor = $state<app.SplitSave | null>(null)
   let conflicts = $state<conflict.Conflict[]>([])
-  async function openConflicts(g: main.SplitSave) {
+  async function openConflicts(g: app.SplitSave) {
     conflictsFor = g
     try { conflicts = (await Conflicts(g.folderID)) ?? [] } catch (e) { fail(e) }
   }
@@ -87,7 +87,7 @@
     }
   }
 
-  function openEdit(a: main.AccountView) {
+  function openEdit(a: app.AccountView) {
     editFor = a
     editName = a.name
     editColor = a.color || colors[0]
@@ -100,7 +100,7 @@
     editFor = null
   }
 
-  async function switchTo(a: main.AccountView) {
+  async function switchTo(a: app.AccountView) {
     await run('switch:' + a.id, () => SwitchAccount(a.id), `${a.name} is playing on this PC`)
   }
 
@@ -111,7 +111,7 @@
     mergeFor = null
   }
 
-  async function toggleOwners(f: main.FolderView) {
+  async function toggleOwners(f: app.FolderView) {
     open[f.id] = !open[f.id]
     if (open[f.id] && owners[f.id] === undefined) {
       owners[f.id] = null
@@ -120,7 +120,7 @@
   }
 
   // Games with separate saves, without the launcher data listed with them.
-  const splitGames = (games: main.SplitSave[]) => games.filter(g => !g.launcher)
+  const splitGames = (games: app.SplitSave[]) => games.filter(g => !g.launcher)
 </script>
 
 <header>

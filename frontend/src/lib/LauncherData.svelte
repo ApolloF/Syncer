@@ -5,14 +5,14 @@
   import RestoreDialog from './RestoreDialog.svelte'
   import { ui, attempt, fail, toast, refresh } from './state.svelte'
   import { backupLine, stateOf } from './folders'
-  import { Folders, SetFolderSync, SetFolderBackup, RepairFolder, OpenPath } from '../../wailsjs/go/main/App'
-  import type { main } from '../../wailsjs/go/models'
+  import { Folders, SetFolderSync, SetFolderBackup, RepairFolder, OpenPath } from '../../wailsjs/go/app/App'
+  import type { app } from '../../wailsjs/go/models'
 
   // The data a launcher (Seaglass) asks Syncer to sync and back up: playtime,
   // achievements and settings. Not a game's saves, so it lives here rather
   // than under Games; the launcher keeps each account's apart by itself.
-  let folders = $state<main.FolderView[]>([])
-  let restoreFor = $state<main.FolderView | null>(null)
+  let folders = $state<app.FolderView[]>([])
+  let restoreFor = $state<app.FolderView | null>(null)
   let repairing = $state('')
   let flash = $state('')
 
@@ -37,19 +37,19 @@
     })
   })
 
-  async function toggleSync(f: main.FolderView, on: boolean) {
+  async function toggleSync(f: app.FolderView, on: boolean) {
     f.sync = on
     if (await attempt(() => SetFolderSync(f.id, on))) { load(); refresh() }
     else f.sync = !on
   }
 
-  async function toggleBackup(f: main.FolderView, on: boolean) {
+  async function toggleBackup(f: app.FolderView, on: boolean) {
     f.backup = on
     if (await attempt(() => SetFolderBackup(f.id, on))) { if (!f.sync) load() }
     else f.backup = !on
   }
 
-  async function repair(f: main.FolderView) {
+  async function repair(f: app.FolderView) {
     repairing = f.id
     try {
       const what = await RepairFolder(f.id)
@@ -60,7 +60,7 @@
   }
 
   // "Seaglass (playtime, achievements, settings)" -> "Seaglass".
-  const name = (f: main.FolderView) => f.label.replace(/ \(.*\)$/, '')
+  const name = (f: app.FolderView) => f.label.replace(/ \(.*\)$/, '')
 </script>
 
 {#if folders.length}

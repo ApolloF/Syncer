@@ -4,8 +4,8 @@
   import Modal from '../lib/Modal.svelte'
   import LauncherData from '../lib/LauncherData.svelte'
   import { ui, attempt, fail, toast, refresh, applyTheme } from '../lib/state.svelte'
-  import { SaveSettings, ModSettingsDiffer, UseModSettingsEverywhere, SetAccountsEnabled, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, InstallUpdate } from '../../wailsjs/go/main/App'
-  import type { store, main } from '../../wailsjs/go/models'
+  import { SaveSettings, ModSettingsDiffer, UseModSettingsEverywhere, SetAccountsEnabled, OpenSyncthingGUI, Log, UndoAll, Pause, Resume, CheckForUpdate, InstallUpdate } from '../../wailsjs/go/app/App'
+  import type { store, app } from '../../wailsjs/go/models'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import { pausedUntil, tomorrowMorning } from '../lib/fmt'
   import { launchersAvailable, modsAvailable, updatesByRebuild } from '../lib/features'
@@ -84,7 +84,7 @@
 
   let undoOpen = $state(false)
   let undoBusy = $state(false)
-  let undoReport = $state<main.UndoReport | null>(null)
+  let undoReport = $state<app.UndoReport | null>(null)
   let opts = $state({ unpair: true, stopBackups: false, deleteBackups: false, stopSyncthing: false, uninstallSyncthing: false })
 
   $effect(() => { if (!opts.stopSyncthing) opts.uninstallSyncthing = false })
@@ -99,7 +99,7 @@
   async function doUndo() {
     undoBusy = true
     try {
-      const report = await UndoAll(opts as main.UndoOptions)
+      const report = await UndoAll(opts as app.UndoOptions)
       toast(`${report.folders} games and ${report.devices} PCs unlinked`, 'ok')
       refresh()
       if (report.notes?.length) undoReport = report

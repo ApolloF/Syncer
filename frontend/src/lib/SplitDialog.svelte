@@ -3,7 +3,7 @@
   import Icon from './Icon.svelte'
   import { ui, fail, toast, refresh } from './state.svelte'
   import { bytes, when } from './fmt'
-  import { Conflicts, ConflictOwners, SplitGame } from '../../wailsjs/go/main/App'
+  import { Conflicts, ConflictOwners, SplitGame } from '../../wailsjs/go/app/App'
   import type { conflict } from '../../wailsjs/go/models'
 
   // Gives every account its own saves of a game. Conflicting versions can be

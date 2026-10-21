@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { main } from '../../wailsjs/go/models'
+import type { app } from '../../wailsjs/go/models'
 import { backupLine, isTime, plural, stateOf } from './folders'
 
-const folder = (f: Partial<main.FolderView>) => ({ exists: true, state: 'idle', ...f }) as main.FolderView
+const folder = (f: Partial<app.FolderView>) => ({ exists: true, state: 'idle', ...f }) as app.FolderView
 
 describe('isTime', () => {
   it('rejects Go zero times', () => {

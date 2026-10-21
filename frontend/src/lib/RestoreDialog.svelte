@@ -4,17 +4,17 @@
   import { attempt, fail, toast, refresh } from './state.svelte'
   import { when } from './fmt'
   import { backupLine, plural } from './folders'
-  import { RestorePoints, Restore, Decisions, SwitchDecision } from '../../wailsjs/go/main/App'
-  import type { main, backup } from '../../wailsjs/go/models'
+  import { RestorePoints, Restore, Decisions, SwitchDecision } from '../../wailsjs/go/app/App'
+  import type { app, backup } from '../../wailsjs/go/models'
 
   // Restores a folder from its backup: the latest one or an earlier restore
   // point, or switches a conflict decision back.
-  let { folder, onclose, ondone }: { folder: main.FolderView; onclose: () => void; ondone?: () => void } = $props()
+  let { folder, onclose, ondone }: { folder: app.FolderView; onclose: () => void; ondone?: () => void } = $props()
 
   const launcher = $derived(folder.kind === 'launcher')
-  let points = $state<main.RestorePoint[]>([])
+  let points = $state<app.RestorePoint[]>([])
   let latestOrigin = $state<backup.Origin | null>(null)
-  let decisions = $state<main.DecisionView[]>([])
+  let decisions = $state<app.DecisionView[]>([])
   let switching = $state('')
   let point = $state(0)
   let restoring = $state(false)
@@ -38,7 +38,7 @@
     return `from ${from.join(', ')}${same ? '' : ` · backed up by ${by.join(', ')}`}`
   }
 
-  async function switchDecision(d: main.DecisionView) {
+  async function switchDecision(d: app.DecisionView) {
     const f = folder
     switching = d.rel
     if (await attempt(() => SwitchDecision(f.id, d.rel), `Now using ${d.other ? `${d.other}'s` : 'the other'} version of ${d.rel}`)) {

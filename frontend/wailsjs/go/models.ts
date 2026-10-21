@@ -45,181 +45,7 @@ export namespace accounts {
 
 }
 
-export namespace backup {
-	
-	export class DriveAccount {
-	    myDrive: string;
-	    label: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new DriveAccount(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.myDrive = source["myDrive"];
-	        this.label = source["label"];
-	    }
-	}
-	export class DriveInfo {
-	    found: boolean;
-	    running: boolean;
-	    myDrive: string;
-	    drives: DriveAccount[];
-	
-	    static createFrom(source: any = {}) {
-	        return new DriveInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.found = source["found"];
-	        this.running = source["running"];
-	        this.myDrive = source["myDrive"];
-	        this.drives = this.convertValues(source["drives"], DriveAccount);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class Origin {
-	    by?: string[];
-	    from?: string[];
-	
-	    static createFrom(source: any = {}) {
-	        return new Origin(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.by = source["by"];
-	        this.from = source["from"];
-	    }
-	}
-	export class Orphan {
-	    id: string;
-	    label: string;
-	    path: string;
-	    host: string;
-	    mine: boolean;
-	    // Go type: time
-	    backedUp: any;
-	    // Go type: time
-	    modified: any;
-	    bytes: number;
-	    files: number;
-	    points: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new Orphan(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.label = source["label"];
-	        this.path = source["path"];
-	        this.host = source["host"];
-	        this.mine = source["mine"];
-	        this.backedUp = this.convertValues(source["backedUp"], null);
-	        this.modified = this.convertValues(source["modified"], null);
-	        this.bytes = source["bytes"];
-	        this.files = source["files"];
-	        this.points = source["points"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-
-}
-
-export namespace conflict {
-	
-	export class Conflict {
-	    rel: string;
-	    copy: string;
-	    device: string;
-	    deviceName: string;
-	    size: number;
-	    // Go type: time
-	    modified: any;
-	    missing: boolean;
-	    copySize: number;
-	    // Go type: time
-	    copyModified: any;
-	    currentName: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Conflict(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.rel = source["rel"];
-	        this.copy = source["copy"];
-	        this.device = source["device"];
-	        this.deviceName = source["deviceName"];
-	        this.size = source["size"];
-	        this.modified = this.convertValues(source["modified"], null);
-	        this.missing = source["missing"];
-	        this.copySize = source["copySize"];
-	        this.copyModified = this.convertValues(source["copyModified"], null);
-	        this.currentName = source["currentName"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-
-}
-
-export namespace main {
+export namespace app {
 	
 	export class SaveFile {
 	    rel: string;
@@ -1288,6 +1114,180 @@ export namespace main {
 	        this.err = source["err"];
 	        this.peers = source["peers"];
 	        this.pushing = source["pushing"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace backup {
+	
+	export class DriveAccount {
+	    myDrive: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DriveAccount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.myDrive = source["myDrive"];
+	        this.label = source["label"];
+	    }
+	}
+	export class DriveInfo {
+	    found: boolean;
+	    running: boolean;
+	    myDrive: string;
+	    drives: DriveAccount[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DriveInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.found = source["found"];
+	        this.running = source["running"];
+	        this.myDrive = source["myDrive"];
+	        this.drives = this.convertValues(source["drives"], DriveAccount);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Origin {
+	    by?: string[];
+	    from?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Origin(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.by = source["by"];
+	        this.from = source["from"];
+	    }
+	}
+	export class Orphan {
+	    id: string;
+	    label: string;
+	    path: string;
+	    host: string;
+	    mine: boolean;
+	    // Go type: time
+	    backedUp: any;
+	    // Go type: time
+	    modified: any;
+	    bytes: number;
+	    files: number;
+	    points: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Orphan(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.path = source["path"];
+	        this.host = source["host"];
+	        this.mine = source["mine"];
+	        this.backedUp = this.convertValues(source["backedUp"], null);
+	        this.modified = this.convertValues(source["modified"], null);
+	        this.bytes = source["bytes"];
+	        this.files = source["files"];
+	        this.points = source["points"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace conflict {
+	
+	export class Conflict {
+	    rel: string;
+	    copy: string;
+	    device: string;
+	    deviceName: string;
+	    size: number;
+	    // Go type: time
+	    modified: any;
+	    missing: boolean;
+	    copySize: number;
+	    // Go type: time
+	    copyModified: any;
+	    currentName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Conflict(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rel = source["rel"];
+	        this.copy = source["copy"];
+	        this.device = source["device"];
+	        this.deviceName = source["deviceName"];
+	        this.size = source["size"];
+	        this.modified = this.convertValues(source["modified"], null);
+	        this.missing = source["missing"];
+	        this.copySize = source["copySize"];
+	        this.copyModified = this.convertValues(source["copyModified"], null);
+	        this.currentName = source["currentName"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

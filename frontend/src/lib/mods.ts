@@ -1,4 +1,4 @@
-import type { main } from '../../wailsjs/go/models'
+import type { app } from '../../wailsjs/go/models'
 
 // A game's mod folders in the order Vortex uses them: staging, profiles, deployment.
 const kindOrder: Record<string, number> = { 'mods': 0, 'mods-profiles': 1, 'mods-deployed': 2 }
@@ -11,7 +11,7 @@ export const byModKind = (a: { kind?: string }, b: { kind?: string }) =>
 export const modGameName = (label: string) => label.replace(/ \((Vortex mods|Vortex load order|deployed mods)\)$/, '')
 
 /** A deployed-mods folder's state as a pill. */
-export function modPhase(f: Pick<main.FolderView, 'modRole' | 'modPhase'>): { kind: string; text: string } {
+export function modPhase(f: Pick<app.FolderView, 'modRole' | 'modPhase'>): { kind: string; text: string } {
   if (f.modRole === 'source') {
     if (f.modPhase === 'held') return { kind: 'err', text: 'On hold' }
     if (f.modPhase === 'busy') return { kind: 'accent', text: 'Vortex or game open' }

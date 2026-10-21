@@ -1,6 +1,6 @@
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import { Overview, Accounts, WindowHidden } from '../../wailsjs/go/main/App'
-import type { main } from '../../wailsjs/go/models'
+import { Overview, Accounts, WindowHidden } from '../../wailsjs/go/app/App'
+import type { app } from '../../wailsjs/go/models'
 import { err } from './fmt'
 import { issueView } from './features'
 import { createRefresher } from './refresher'
@@ -11,8 +11,8 @@ type Toast = { id: number; text: string; kind: 'info' | 'ok' | 'err' }
 
 export const ui = $state({
   view: 'overview' as View,
-  overview: null as main.Overview | null,
-  accounts: null as main.AccountsView | null, // loaded while accounts are on
+  overview: null as app.Overview | null,
+  accounts: null as app.AccountsView | null, // loaded while accounts are on
   toasts: [] as Toast[],
   tick: 0, // bumps on every backend "changed" event so views can refetch
   gamesAdded: 0, // bumps when games were added automatically
@@ -51,7 +51,7 @@ export async function refreshAccounts() {
 }
 
 /** Opens the page that lists a folder with an issue, scrolled to it. */
-export function showIssue(i: main.FolderIssue) {
+export function showIssue(i: app.FolderIssue) {
   ui.view = issueView(i, ui.overview)
   ui.focus = i.id
 }

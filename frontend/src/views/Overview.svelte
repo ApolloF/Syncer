@@ -3,7 +3,7 @@
   import { ui, attempt, refresh, showIssue } from '../lib/state.svelte'
   import { ago, pausedUntil } from '../lib/fmt'
   import { googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered, overviewSubtitle, updatesByRebuild } from '../lib/features'
-  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate, DismissNotice } from '../../wailsjs/go/main/App'
+  import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate, DismissNotice } from '../../wailsjs/go/app/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
   const o = $derived(ui.overview)

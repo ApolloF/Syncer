@@ -10,7 +10,7 @@
   import { ui, attempt, refresh, toast } from '../lib/state.svelte'
   import { ago, bytes, choices } from '../lib/fmt'
   import { backupPlace, folderBackupStatus, googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
-  import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, UseDriveApp, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/main/App'
+  import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, UseDriveApp, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/app/App'
   import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
   import type { store } from '../../wailsjs/go/models'
 
