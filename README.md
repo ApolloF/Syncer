@@ -28,6 +28,10 @@
 
 <sub>Screenshots use made-up games and PCs.</sub>
 
+## Why
+
+I play on more than one PC and couldn't find anything that kept my saves in sync on its own, for every game and every store, without a cloud service in between. Steam Cloud only covers some games, and backup tools like Ludusavi back up but don't sync. So I made Syncer.
+
 ## Install
 
 1. Download **`Syncer-amd64-installer.exe`** from [Releases](https://github.com/ApolloF/syncer/releases/latest) and run it. It installs just for your user (no admin prompt) into `%LOCALAPPDATA%\Programs\Syncer`. Prefer no installer? `Syncer.exe` from the same release is portable; keep it in a permanent folder, since the background task points at it.
