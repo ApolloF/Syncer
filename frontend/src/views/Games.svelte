@@ -1,15 +1,15 @@
 <script module lang="ts">
-  import type { main, backup } from '../../wailsjs/go/models'
+  import type { app, backup } from '../../wailsjs/go/models'
   // Survive tab switches so the list doesn't flash or rescan every time.
   const cache = $state({
-    folders: [] as main.FolderView[],
-    found: null as main.GameView[] | null,
-    available: null as main.AvailableView[] | null,
+    folders: [] as app.FolderView[],
+    found: null as app.GameView[] | null,
+    available: null as app.AvailableView[] | null,
     others: null as backup.Orphan[] | null,
     tab: 'games' as 'games' | 'found' | 'other',
     // The Mods page: this PC's mod folders, and how sharing Vortex's mod lists goes.
-    modsFound: null as main.GameView[] | null,
-    shares: [] as main.VortexShareView[],
+    modsFound: null as app.GameView[] | null,
+    shares: [] as app.VortexShareView[],
   })
 </script>
 
@@ -35,7 +35,7 @@
     ReleaseModHold, MakeModSource, HandOverMods,
     StopSyncingCopies,
     GetNewer, ScanMods, VortexShares, PushVortexList, RepairFolder,
-  } from '../../wailsjs/go/main/App'
+  } from '../../wailsjs/go/app/App'
   import type { conflict, store, mods } from '../../wailsjs/go/models'
 
   // The same page lists either the games or, with "Find installed mods" on,
@@ -50,24 +50,24 @@
   let othersErr = $state('')
   let query = $state('')
   let adding = $state('')
-  let restoreFor = $state<main.FolderView | null>(null)
-  let removeFor = $state<main.FolderView | null>(null)
+  let restoreFor = $state<app.FolderView | null>(null)
+  let removeFor = $state<app.FolderView | null>(null)
   let deleteBackupToo = $state(false)
   let custom = $state<{ path: string; name: string } | null>(null)
-  let conflictsFor = $state<main.FolderView | null>(null)
+  let conflictsFor = $state<app.FolderView | null>(null)
   let conflicts = $state<conflict.Conflict[]>([])
   let resolving = $state('')
   // Separating a game's saves per account (see SplitDialog).
-  let splitFor = $state<main.FolderView | null>(null)
+  let splitFor = $state<app.FolderView | null>(null)
   const canSplit = $derived((ui.accounts?.accounts?.length ?? 0) >= 2)
 
   // Deleting a game's saves: deliberately a few steps (see openDelete).
-  let deleteFor = $state<main.FolderView | null>(null)
+  let deleteFor = $state<app.FolderView | null>(null)
   let deleteTyped = $state('')
   let deleteAck = $state(false)
   let deleting = $state(false)
 
-  let excludeFor = $state<main.FolderView | null>(null)
+  let excludeFor = $state<app.FolderView | null>(null)
   let excludeText = $state('')
   let excluding = $state(false)
 
@@ -82,23 +82,23 @@
   let adopting = $state(false)
 
   // Deployed mods (experimental): apply an update, audits, rollback.
-  let applyFor = $state<main.FolderView | null>(null)
-  let preview = $state<main.ModPreview | null>(null)
+  let applyFor = $state<app.FolderView | null>(null)
+  let preview = $state<app.ModPreview | null>(null)
   let confirm = $state({ deletes: false, gameFiles: false, code: false })
   let applyBusy = $state(false)
-  let auditFor = $state<main.FolderView | null>(null)
+  let auditFor = $state<app.FolderView | null>(null)
   let audits = $state<mods.AuditEntry[]>([])
   let auditOpen = $state<Record<number, boolean>>({})
   let auditBusy = $state(false)
-  let rollbackFor = $state<main.FolderView | null>(null)
-  let snapshots = $state<main.SnapshotView[]>([])
+  let rollbackFor = $state<app.FolderView | null>(null)
+  let snapshots = $state<app.SnapshotView[]>([])
   let rollbackBusy = $state('')
 
   let dropFor = $state<backup.Orphan | null>(null)
   let dropTyped = $state('')
   let dropping = $state(false)
 
-  async function openConflicts(f: main.FolderView) {
+  async function openConflicts(f: app.FolderView) {
     conflictsFor = f
     try { conflicts = (await Conflicts(f.id)) ?? [] } catch (e) { fail(e) }
   }
@@ -232,8 +232,8 @@
   // ---- the Mods page: one card per game with all its mod folders ----
   type ModGroup = {
     game: string; name: string
-    synced: main.FolderView[]; found: main.GameView[]; avail: main.AvailableView[]
-    share?: main.VortexShareView
+    synced: app.FolderView[]; found: app.GameView[]; avail: app.AvailableView[]
+    share?: app.VortexShareView
   }
   const modGroups = $derived.by(() => {
     const m = new Map<string, ModGroup>()
@@ -287,7 +287,7 @@
   const syncedCopies = $derived(cache.folders.filter(f => f.sync && f.copyOf))
   // Synced folders inside another synced folder, grouped by the outer one.
   const overlaps = $derived.by(() => {
-    const m = new Map<string, { outer: main.FolderView; inner: main.FolderView[] }>()
+    const m = new Map<string, { outer: app.FolderView; inner: app.FolderView[] }>()
     for (const f of cache.folders) {
       const outer = f.inside ? cache.folders.find(x => x.id === f.inside) : undefined
       if (!outer) continue
@@ -300,7 +300,7 @@
   const outerIds = $derived(new Set(overlaps.map(v => v.outer.id)))
   const removeInner = $derived(removeFor ? overlaps.find(v => v.outer.id === removeFor!.id)?.inner ?? [] : [])
   const base = (p: string) => p.split('\\').filter(Boolean).pop() ?? p
-  const names = (fs: main.FolderView[]) => [...new Set(fs.map(f => f.label))].join(', ')
+  const names = (fs: app.FolderView[]) => [...new Set(fs.map(f => f.label))].join(', ')
   const notInstalled = $derived((cache.found ?? []).filter(g => !g.kind && !g.syncedBy && !g.installed && (showCloud || !g.steamCloud)))
   const bulkCount = $derived(notInstalled.filter(g => bulkPick[g.path]).length)
 
@@ -323,22 +323,22 @@
     const ok = await attempt(() => AddFolder(name, path), `Now syncing ${name}`)
     adding = ''
     if (ok) {
-      cache.found = cache.found?.map(g => g.path === path ? { ...g, syncedBy: name } as main.GameView : g) ?? null
+      cache.found = cache.found?.map(g => g.path === path ? { ...g, syncedBy: name } as app.GameView : g) ?? null
       load(); refresh()
     }
   }
 
   // Mod folders are added by their key: this PC finds the folder again.
-  let modAsk = $state<main.GameView | null>(null)
-  async function addMod(g: main.GameView, asked = false) {
+  let modAsk = $state<app.GameView | null>(null)
+  async function addMod(g: app.GameView, asked = false) {
     if (g.kind === 'mods-deployed' && !asked) { modAsk = g; return }
     modAsk = null
     adding = g.path
     const ok = await attempt(() => AddModFolder(g.modKey ?? ''), `Now syncing ${g.name}`)
     adding = ''
     if (ok) {
-      cache.found = cache.found?.map(x => x.path === g.path ? { ...x, syncedBy: g.name } as main.GameView : x) ?? null
-      cache.modsFound = cache.modsFound?.map(x => x.path === g.path ? { ...x, syncedBy: g.name } as main.GameView : x) ?? null
+      cache.found = cache.found?.map(x => x.path === g.path ? { ...x, syncedBy: g.name } as app.GameView : x) ?? null
+      cache.modsFound = cache.modsFound?.map(x => x.path === g.path ? { ...x, syncedBy: g.name } as app.GameView : x) ?? null
       load()
       refresh()
     }
@@ -350,7 +350,7 @@
     'mods-deployed': { text: 'Deployed mods', tip: "The mod files Vortex deployed into the game's folder, for other PCs to play with right away. Experimental: one PC sends, the others apply checked updates." },
   }
 
-  async function openApply(f: main.FolderView) {
+  async function openApply(f: app.FolderView) {
     applyFor = f
     preview = null
     confirm = { deletes: false, gameFiles: false, code: false }
@@ -369,12 +369,12 @@
   async function doApply() {
     if (!applyFor) return
     applyBusy = true
-    const ok = await attempt(() => ApplyModUpdate(applyFor!.id, confirm as main.ApplyConfirm), 'Applying the update…')
+    const ok = await attempt(() => ApplyModUpdate(applyFor!.id, confirm as app.ApplyConfirm), 'Applying the update…')
     applyBusy = false
     if (ok) { applyFor = null; load() }
   }
 
-  async function openAudit(f: main.FolderView) {
+  async function openAudit(f: app.FolderView) {
     auditFor = f
     auditOpen = {}
     audits = (await ModAudit(f.id).catch(() => [])) ?? []
@@ -407,7 +407,7 @@
     if (await attempt(() => MakeModSource(auditFor!.id), 'This PC sends these mods now')) { auditFor = null; load() }
   }
 
-  async function openRollback(f: main.FolderView) {
+  async function openRollback(f: app.FolderView) {
     rollbackFor = f
     snapshots = (await ModSnapshots(f.id).catch(() => [])) ?? []
   }
@@ -425,7 +425,7 @@
     const ok = await attempt(() => AddBackupOnly(name, path), `Backing up ${name}`)
     adding = ''
     if (ok) {
-      cache.found = cache.found?.map(g => g.path === path ? { ...g, syncedBy: name } as main.GameView : g) ?? null
+      cache.found = cache.found?.map(g => g.path === path ? { ...g, syncedBy: name } as app.GameView : g) ?? null
       load(); refresh()
     }
   }
@@ -437,14 +437,14 @@
   }
 
   async function doBulk() {
-    const items = notInstalled.filter(g => bulkPick[g.path]).map(g => ({ label: g.name, path: g.path }) as main.NewFolder)
+    const items = notInstalled.filter(g => bulkPick[g.path]).map(g => ({ label: g.name, path: g.path }) as app.NewFolder)
     bulkBusy = true
     try {
       const r = await AddBackupOnlyMany(items)
       const added = new Set(r.added ?? [])
       if (added.size) toast(`Backing up ${plural(added.size, 'game')} without syncing`, 'ok')
       if (r.skipped?.length) toast(`${plural(r.skipped.length, 'game')} skipped: ${r.skipped[0]}${r.skipped.length > 1 ? ' …' : ''}`, 'err')
-      cache.found = cache.found?.map(g => added.has(g.path) ? { ...g, syncedBy: g.name } as main.GameView : g) ?? null
+      cache.found = cache.found?.map(g => added.has(g.path) ? { ...g, syncedBy: g.name } as app.GameView : g) ?? null
       bulkOpen = false
       load(); refresh()
     } catch (e) { fail(e) }
@@ -459,9 +459,9 @@
   }
 
   // Backing up mods is off unless turned on; for deployed mods, ask first.
-  let backupAsk = $state<main.FolderView | null>(null)
+  let backupAsk = $state<app.FolderView | null>(null)
 
-  async function toggleBackup(f: main.FolderView, on: boolean, asked = false) {
+  async function toggleBackup(f: app.FolderView, on: boolean, asked = false) {
     if (on && f.kind === 'mods-deployed' && !asked) { backupAsk = f; return }
     backupAsk = null
     f.backup = on
@@ -469,14 +469,14 @@
     else f.backup = !on
   }
 
-  async function toggleSync(f: main.FolderView, on: boolean, asked = false) {
+  async function toggleSync(f: app.FolderView, on: boolean, asked = false) {
     if (on && (f.steamCloud || f.ubisoftCloud) && !asked) return askCloud(f.label, () => toggleSync(f, on, true), !f.steamCloud)
     f.sync = on
     if (await attempt(() => SetFolderSync(f.id, on))) { load(); refresh() }
     else f.sync = !on
   }
 
-  function openRemove(f: main.FolderView) {
+  function openRemove(f: app.FolderView) {
     removeFor = f
     deleteBackupToo = false
   }
@@ -493,7 +493,7 @@
   }
 
   // Reached only from the Remove dialog, and it needs the game's name typed.
-  function openDelete(f: main.FolderView) {
+  function openDelete(f: app.FolderView) {
     removeFor = null
     deleteFor = f
     deleteTyped = ''
@@ -535,7 +535,7 @@
     excludeText = next.join('\n')
   }
 
-  function openExclude(f: main.FolderView) {
+  function openExclude(f: app.FolderView) {
     excludeFor = f
     excludeText = (f.exclude ?? []).join('\n')
   }
@@ -576,7 +576,7 @@
   }
 
   let gettingId = $state('')
-  async function getNewer(f: main.FolderView) {
+  async function getNewer(f: app.FolderView) {
     gettingId = f.id
     try {
       const n = await GetNewer(f.id)
@@ -587,7 +587,7 @@
   }
 
   let repairingId = $state('')
-  async function repair(f: main.FolderView) {
+  async function repair(f: app.FolderView) {
     repairingId = f.id
     try {
       const what = await RepairFolder(f.id)
@@ -612,7 +612,7 @@
     if (o && await attempt(() => SaveSettings({ ...o.settings, showSteamCloud: true } as store.Settings))) refresh()
   }
 
-  async function syncHere(a: main.AvailableView, asked = false) {
+  async function syncHere(a: app.AvailableView, asked = false) {
     if ((a.reason === 'steam-cloud' || a.reason === 'ubisoft-cloud') && !asked) return askCloud(a.label, () => syncHere(a, true), a.reason === 'ubisoft-cloud')
     syncingId = a.id
     if (await attempt(() => SyncAvailable(a.id), `Now syncing ${a.label}`)) {
@@ -686,7 +686,7 @@
 
   // "Not installed through Steam" adds nothing to "Not installed" when the
   // game isn't installed at all.
-  const cloudNoted = (g: main.GameView) => g.steamCloudUnverified && !(g.steamCloudReason === 'not-installed' && !g.installed)
+  const cloudNoted = (g: app.GameView) => g.steamCloudUnverified && !(g.steamCloudReason === 'not-installed' && !g.installed)
 
   // A Steam emulator folder holding a copy of the game's own saves.
   function emulatorTip(emulator: string): string {
@@ -712,13 +712,13 @@
   {/if}
 {/snippet}
 
-{#snippet deployedLine(f: main.FolderView)}
+{#snippet deployedLine(f: app.FolderView)}
   <div class="detail faint ellipsis" title={f.modHeld}>
     {f.modRole === 'source' ? 'Sent from this PC' : 'Received'}{f.modPending ? ` · ${f.modPending}` : ''}{f.modHeld ? ` · On hold: ${f.modHeld}` : ''}
   </div>
 {/snippet}
 
-{#snippet folderRow(f: main.FolderView)}
+{#snippet folderRow(f: app.FolderView)}
   {@const s = stateOf(f)}
   <div class="item" class:flash={flash === f.id} id="folder-{f.id}" transition:slide={{ duration: 150 }}>
     <div class="grow">
@@ -808,7 +808,7 @@
   </div>
 {/snippet}
 
-{#snippet foundRow(g: main.GameView)}
+{#snippet foundRow(g: app.GameView)}
   <div class="item" transition:slide={{ duration: 150 }}>
     <div class="grow">
       <div class="row name-row">
@@ -848,7 +848,7 @@
   </div>
 {/snippet}
 
-{#snippet availRow(a: main.AvailableView)}
+{#snippet availRow(a: app.AvailableView)}
   <div class="item" transition:slide={{ duration: 150 }}>
     <div class="grow">
       <div class="name ellipsis" title={a.label}>{a.label}</div>

@@ -1,8 +1,8 @@
-import type { main } from '../../wailsjs/go/models'
+import type { app } from '../../wailsjs/go/models'
 
 // What this build of Syncer has (see internal/features). The views ask here
 // instead of reading the flags, so one place decides what a flag hides.
-type O = Pick<main.Overview, 'features' | 'settings' | 'google'> | null | undefined
+type O = Pick<app.Overview, 'features' | 'settings' | 'google'> | null | undefined
 
 export const modsAvailable = (o: O) => !!o?.features?.mods
 
@@ -27,7 +27,7 @@ export const googleRetiredNotice =
 export const updatesByRebuild = (o: O) => !!o?.features?.personal
 
 /** Where backups go, for copy that says so; empty when there is no backup to speak of. */
-export function backupPlace(o: Pick<main.Overview, 'features' | 'settings' | 'google' | 'drive'> | null | undefined): string {
+export function backupPlace(o: Pick<app.Overview, 'features' | 'settings' | 'google' | 'drive'> | null | undefined): string {
   if (!o || googleRetired(o)) return ''
   if (googleBackendOn(o)) return 'Google Drive'
   if (o.settings.backupRoot) return 'your backup folder'
@@ -41,14 +41,14 @@ export function overviewSubtitle(o: Parameters<typeof backupPlace>[0]): string {
 }
 
 /** The page that lists a folder with an issue. */
-export function issueView(i: Pick<main.FolderIssue, 'launcher' | 'mod'>, o: O): 'settings' | 'mods' | 'games' {
+export function issueView(i: Pick<app.FolderIssue, 'launcher' | 'mod'>, o: O): 'settings' | 'mods' | 'games' {
   if (i.launcher && launchersAvailable(o)) return 'settings'
   if (i.mod && modsPageOn(o)) return 'mods'
   return 'games'
 }
 
 /** The pill for where backups go (Backup page, folder backup): not set up while the Google sign-in is gone. */
-export function folderBackupStatus(o: Pick<main.Overview, 'features' | 'settings' | 'google' | 'drive'> | null | undefined): { kind: string; text: string } {
+export function folderBackupStatus(o: Pick<app.Overview, 'features' | 'settings' | 'google' | 'drive'> | null | undefined): { kind: string; text: string } {
   if (!o) return { kind: 'err', text: '' }
   if (googleRetired(o)) return { kind: 'warn', text: 'Not set up' }
   const kind = o.settings.backupRoot || o.drive.running ? 'ok' : o.drive.found ? 'warn' : 'err'

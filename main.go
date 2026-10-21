@@ -1,86 +1,31 @@
 package main
 
 import (
-	"context"
 	"embed"
-	"os"
-	"strings"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
-
-	"github.com/ApolloF/syncer/internal/logx"
+	"github.com/ApolloF/syncer/internal/app"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// version is set at release builds (-ldflags "-X main.version=v1.2.3").
-var version = "dev"
+//go:embed build/tray.ico
+var trayIcon []byte
+
+// Set at release builds (-ldflags "-X main.version=v1.2.3"); the Google
+// client only in personal builds (see internal/app/gdrive.go).
+var (
+	version            = "dev"
+	gdriveClientID     = ""
+	gdriveClientSecret = ""
+)
 
 func main() {
-	logx.RecordCrashes()
-	startHidden := false
-	for _, a := range os.Args[1:] {
-		if strings.HasPrefix(a, afterUpdateArg) { // started by the Syncer it updated
-			waitForUpdated(a)
-			continue
-		}
-		switch a {
-		case "--tray": // started with Windows: only the tray icon, no window
-			startHidden = true
-		case "--background", "--backup":
-			runBackground()
-			return
-		case "--api": // the launcher API without a window (see api.go)
-			runAPI()
-			return
-		case "--resume": // a pause ran out (\Syncer-Resume task)
-			runResume()
-			return
-		case "--uninstall": // called by the uninstaller
-			runUninstall()
-			return
-		}
-	}
-
-	app := NewApp()
-	app.hidden = startHidden
-	err := wails.Run(&options.App{
-		Title:     "Syncer",
-		Width:     1040,
-		Height:    700,
-		MinWidth:  760,
-		MinHeight: 520,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
-		StartHidden:      startHidden,
-		OnStartup: func(ctx context.Context) {
-			app.startup(ctx)
-			go logx.Run("launcher API", func() { serveAPI(ctx, app) })
-		},
-		OnBeforeClose: app.beforeClose,
-		OnShutdown:    app.shutdown,
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "b1c9c8a4-syncer-apollof",
-			// Opening Syncer again just brings the existing window forward.
-			OnSecondInstanceLaunch: func(options.SecondInstanceData) {
-				app.showWindow()
-			},
-		},
-		Bind: []interface{}{app},
-		Windows: &windows.Options{
-			WebviewIsTransparent: true,
-			WindowIsTranslucent:  true,
-			BackdropType:         windows.Mica,
-			Theme:                windows.SystemDefault,
-		},
+	app.Run(app.Options{
+		Assets:             assets,
+		TrayIcon:           trayIcon,
+		Version:            version,
+		GdriveClientID:     gdriveClientID,
+		GdriveClientSecret: gdriveClientSecret,
 	})
-	if err != nil {
-		logx.Printf("fatal: %v", err)
-	}
 }

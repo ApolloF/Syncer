@@ -5,17 +5,17 @@
   import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
   import { bytes } from '../lib/fmt'
   import { idSegments, selfName } from '../lib/devices'
-  import { Devices, AddDevice, DismissDevice, RemoveDevice, AcceptDevice, AllowJoin, IgnoreJoin, CopyText, PasteText } from '../../wailsjs/go/main/App'
-  import type { main } from '../../wailsjs/go/models'
+  import { Devices, AddDevice, DismissDevice, RemoveDevice, AcceptDevice, AllowJoin, IgnoreJoin, CopyText, PasteText } from '../../wailsjs/go/app/App'
+  import type { app } from '../../wailsjs/go/models'
 
   // How a linked PC is reached (DeviceView.via).
   const viaText: Record<string, string> = { lan: 'on this network', direct: 'over the internet', relay: 'through a Syncthing relay (encrypted)' }
 
-  let v = $state<main.DevicesView | null>(null)
+  let v = $state<app.DevicesView | null>(null)
   let id = $state('')
   let name = $state('')
   let linking = $state(false)
-  let removeFor = $state<main.DeviceView | null>(null)
+  let removeFor = $state<app.DeviceView | null>(null)
   let showQR = $state(false)
   // A PC to check the ID of before it is linked (a request) or allowed (a PC that offered to join).
   let confirmFor = $state<{ id: string; name: string; join: boolean } | null>(null)
@@ -45,7 +45,7 @@
     linking = false
   }
 
-  async function ignore(d: main.JoinView) {
+  async function ignore(d: app.JoinView) {
     await attempt(async () => IgnoreJoin(d.id))
     load(); refresh()
   }

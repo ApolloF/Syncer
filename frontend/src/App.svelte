@@ -2,7 +2,7 @@
   import { fly } from 'svelte/transition'
   import Icon from './lib/Icon.svelte'
   import { ui, init, applyTheme, attempt, refresh, showIssue, type View } from './lib/state.svelte'
-  import { SwitchAccount } from '../wailsjs/go/main/App'
+  import { SwitchAccount } from '../wailsjs/go/app/App'
   import { pausedUntil } from './lib/fmt'
   import { modsPageOn } from './lib/features'
   import Overview from './views/Overview.svelte'
