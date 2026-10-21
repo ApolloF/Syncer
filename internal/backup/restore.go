@@ -97,27 +97,30 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 // point at T itself counts.
 func sources(target, id string, point time.Time) (src, rels map[string]string) {
 	src, rels = map[string]string{}, map[string]string{}
-	add := func(root string) {
+	add := func(root string, version bool) {
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 			// steam_autocloud.vdf names the account of the PC it was backed
 			// up on; this PC's Steam writes its own. A second copy of a file
 			// in one point (see moveTo) isn't a file of the game.
-			if err != nil || d.IsDir() || strings.HasSuffix(p, tmpSuffix) || strings.EqualFold(d.Name(), SteamMarker) ||
-				keptSuffix.MatchString(d.Name()) {
+			if err != nil || d.IsDir() || strings.EqualFold(d.Name(), SteamMarker) || keptSuffix.MatchString(d.Name()) {
 				return nil
 			}
-			rel, _ := filepath.Rel(root, p)
+			name, ok := copyName(p, version)
+			if !ok {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, name)
 			k := strings.ToLower(rel)
 			src[k], rels[k] = p, rel
 			return nil
 		})
 	}
-	add(filepath.Join(target, id))
+	add(filepath.Join(target, id), false)
 	if !point.IsZero() {
 		aside := marks(filepath.Join(target, VersionsDir, id), AsideDir)
 		for _, t := range Points(target, id) { // newest first
 			if !t.Before(point) && (t.Equal(point) || !aside[t.Format(stampFmt)]) {
-				add(filepath.Join(target, VersionsDir, id, t.Format(stampFmt)))
+				add(filepath.Join(target, VersionsDir, id, t.Format(stampFmt)), true)
 			}
 		}
 	}
@@ -133,6 +136,27 @@ type Copy struct {
 	Point    time.Time // the restore point that keeps it; zero for the latest backup
 }
 
+// copyName is the name the file at p goes by in a backup: p itself, or, for
+// a file in a restore point (version) left with the temporary name its copy
+// was made under, the name without it. That happens when a copy into a
+// restore point is cut off or Google Drive keeps the temporary name after the
+// rename; the file is the version all the same. ok is false for what isn't a
+// copy: a temporary file in the live backup (still being written), or in a
+// restore point next to the file it became.
+func copyName(p string, version bool) (name string, ok bool) {
+	name, tmp := strings.CutSuffix(p, tmpSuffix)
+	if !tmp {
+		return p, true
+	}
+	if !version {
+		return "", false
+	}
+	if _, err := os.Lstat(name); err == nil {
+		return "", false
+	}
+	return name, true
+}
+
 // keptSuffix ends the name of a second copy of a file in one restore point
 // (see moveTo).
 var keptSuffix = regexp.MustCompile(`\.syncer-kept-\d+$`)
@@ -146,14 +170,18 @@ func Copies(target, id string) map[string][]Copy {
 	}
 	add := func(root string, point time.Time) {
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() || strings.HasSuffix(p, tmpSuffix) || strings.EqualFold(d.Name(), SteamMarker) {
+			if err != nil || d.IsDir() || strings.EqualFold(d.Name(), SteamMarker) {
+				return nil
+			}
+			name, ok := copyName(p, !point.IsZero())
+			if !ok {
 				return nil
 			}
 			fi, err := d.Info()
 			if err != nil {
 				return nil
 			}
-			rel, _ := filepath.Rel(root, p)
+			rel, _ := filepath.Rel(root, name)
 			rel = keptSuffix.ReplaceAllString(rel, "")
 			k := strings.ToLower(rel)
 			out[k] = append(out[k], Copy{Rel: rel, Path: p, Modified: fi.ModTime(), Point: point})

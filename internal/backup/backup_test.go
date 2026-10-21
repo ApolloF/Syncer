@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -493,5 +494,57 @@ func TestKeepNeverOverwrites(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Errorf("kept %v, want all three", got)
+	}
+}
+
+// Google Drive can leave a copy in a restore point under the temporary name
+// it was written with. It is still the version, unless the real name is there.
+func TestLeftoverTempVersionsCanBeRestored(t *testing.T) {
+	src, target := t.TempDir(), t.TempDir()
+	id := "leftover-" + time.Now().Format("150405.000000")
+	defer os.Remove(indexPath(id))
+	f := Folder{ID: id, Label: "L", Path: src}
+	stamp := "2026-10-20_193123"
+	pt, _ := time.ParseInLocation(stampFmt, stamp, time.Local)
+	ver := filepath.Join(target, VersionsDir, id, stamp)
+	write(t, filepath.Join(target, id, "now.json"), "latest")
+	write(t, filepath.Join(ver, "sub", "a.json"+tmpSuffix), "stuck")
+	write(t, filepath.Join(ver, "sub", "b.json"), "real")
+	write(t, filepath.Join(ver, "sub", "b.json"+tmpSuffix), "partial")
+	write(t, filepath.Join(target, id, "live.json"+tmpSuffix), "being written")
+
+	cs := Copies(target, id)
+	a := cs[strings.ToLower(filepath.Join("sub", "a.json"))]
+	if len(a) != 1 || a[0].Point.IsZero() || a[0].Rel != filepath.Join("sub", "a.json") {
+		t.Fatalf("stuck version not listed under its real name: %+v", a)
+	}
+	if b := cs[strings.ToLower(filepath.Join("sub", "b.json"))]; len(b) != 1 || read(t, b[0].Path) != "real" {
+		t.Errorf("temp file next to the real one counted: %+v", b)
+	}
+	if _, ok := cs["live.json"]; ok {
+		t.Error("temp file in the live backup counted as data")
+	}
+
+	n, err := Restore(target, f, pt)
+	if err != nil || n != 3 {
+		t.Fatalf("restore: n=%d err=%v", n, err)
+	}
+	if read(t, filepath.Join(src, "sub", "a.json")) != "stuck" || read(t, filepath.Join(src, "sub", "b.json")) != "real" {
+		t.Error("versions not restored")
+	}
+	if _, err := os.Stat(filepath.Join(src, "live.json")); err == nil {
+		t.Error("in-progress temp file restored")
+	}
+}
+
+func TestCopyVersionsKeepsLeftoverTempVersions(t *testing.T) {
+	target := t.TempDir()
+	stamp := "2026-10-20_193123"
+	write(t, filepath.Join(target, VersionsDir, "old", stamp, "a.json"+tmpSuffix), "stuck")
+	if err := CopyVersions(context.Background(), target, "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(target, VersionsDir, "new", stamp, "a.json")) != "stuck" {
+		t.Error("stuck version not copied under its real name")
 	}
 }
