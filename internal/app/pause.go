@@ -177,14 +177,11 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 		}
 	}
 	s := store.LoadSettings()
-	var left, modHeld []string
-	busy := map[string]bool{} // saves are moving there: they resume when that's done
-	for _, id := range accounts.OpFolders() {
-		busy[id] = true
-	}
+	var modHeld, dropped []string
 	for _, id := range held {
 		if !exists[id] || game[id] {
-			continue // removed meanwhile, or the game's hold takes it over
+			dropped = append(dropped, id) // removed meanwhile, or the game's hold takes it over
+			continue
 		}
 		// A mod folder waits while its mod manager is open (see modsTick),
 		// and a PC receiving deployed mods keeps its folder paused.
@@ -192,19 +189,16 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 			if holdable(s, id) {
 				modHeld = append(modHeld, id)
 			}
+			dropped = append(dropped, id)
 			continue
 		}
-		if busy[id] {
-			left = append(left, id)
-			continue
-		}
-		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
+		// Saves moving there (an account operation) resume when that's done.
+		if err := resumeLocked(ctx, c, id, func(st *store.State) *[]string { return &st.PausedFolders }); err != nil {
 			errs = append(errs, err)
-			left = append(left, id)
 		}
 	}
 	store.UpdateState(func(st *store.State) {
-		st.PausedFolders = left
+		st.PausedFolders = slices.DeleteFunc(st.PausedFolders, func(id string) bool { return slices.Contains(dropped, id) })
 		for _, id := range modHeld {
 			if !slices.Contains(st.ModHeld, id) {
 				st.ModHeld = append(st.ModHeld, id)
@@ -212,6 +206,44 @@ func syncPause(ctx context.Context, c *syncthing.Client) error {
 		}
 	})
 	return errors.Join(errs...)
+}
+
+// lockedCall bounds a Syncthing call made while holding the state lock,
+// which every other change to the state waits for.
+const lockedCall = 5 * time.Second
+
+// opFolder reports whether an unfinished account operation works on a
+// folder. When that can't be told, every folder counts as one of them.
+func opFolder() func(id string) bool {
+	ids, err := accounts.OpFolders()
+	if err != nil {
+		logx.Printf("%v", err)
+		return func(string) bool { return true }
+	}
+	return func(id string) bool { return slices.Contains(ids, id) }
+}
+
+// resumeLocked resumes folder id if it's still in the list that list picks
+// and no account operation works on it, and then drops it from that list.
+// Both happen under the state lock: an account operation reads the lists
+// under it too, so it never finds a folder paused that is being resumed. A
+// folder that isn't resumed stays listed.
+func resumeLocked(ctx context.Context, c *syncthing.Client, id string, list func(*store.State) *[]string) error {
+	var perr error
+	if err := store.UpdateState(func(st *store.State) {
+		l := list(st)
+		if !slices.Contains(*l, id) || opFolder()(id) {
+			return
+		}
+		cctx, cancel := context.WithTimeout(ctx, lockedCall)
+		defer cancel()
+		if perr = c.PatchFolder(cctx, id, map[string]any{"paused": false}); perr == nil {
+			*l = slices.DeleteFunc(*l, func(x string) bool { return x == id })
+		}
+	}); err != nil {
+		return err
+	}
+	return perr
 }
 
 // runResume is what the one-off \Syncer-Resume task runs.
@@ -302,8 +334,13 @@ func releaseFolders(ctx context.Context, c *syncthing.Client) error {
 	}
 	var errs []error
 	failed := map[string]bool{}
+	busy := opFolder()
 	for _, id := range held {
 		if !exists[id] || failed[id] || isMod(s, id) && !holdable(s, id) {
+			continue
+		}
+		if busy(id) {
+			failed[id] = true // saves are moving there: kept until that's done
 			continue
 		}
 		if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {

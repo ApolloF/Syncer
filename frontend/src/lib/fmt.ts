@@ -21,6 +21,22 @@ export function ago(t: string | number | Date | undefined | null): string {
   return d.toLocaleDateString()
 }
 
+export interface LastBackupLines {
+  when: string // "Last backup": the last run that finished without errors
+  failed: string // a second muted line, only when the latest run failed
+}
+
+export function lastBackupLines(
+  lastSuccess: string | number | Date | undefined | null,
+  attempt: { ok: boolean; finished?: string | number | Date | null; errors?: string[] | null } | undefined | null,
+): LastBackupLines {
+  const done = ago(lastSuccess)
+  const when = done === 'never' ? 'No backup yet' : done
+  if (!attempt || attempt.ok) return { when, failed: '' }
+  const why = attempt.errors?.[0]?.trim()
+  return { when, failed: `Last attempt failed ${ago(attempt.finished)}${why ? ` · ${why}` : ''}` }
+}
+
 export function when(unix: number): string {
   return new Date(unix * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
