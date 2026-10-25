@@ -163,6 +163,15 @@ func newAsidePoint(target, id string) (string, time.Time) {
 	return dir, t
 }
 
+// dropPoint removes a point newAsidePoint made, and its marks, when nothing
+// came of it.
+func dropPoint(target, id, stamp string) {
+	root := filepath.Join(target, VersionsDir, id)
+	_ = os.RemoveAll(filepath.Join(root, stamp))
+	_ = os.Remove(filepath.Join(root, PinnedDir, stamp))
+	_ = os.Remove(filepath.Join(root, AsideDir, stamp))
+}
+
 // keepWait is how long Keep waits for a running backup.
 var keepWait = time.Minute
 
