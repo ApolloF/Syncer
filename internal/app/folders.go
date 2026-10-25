@@ -873,13 +873,17 @@ func (a *App) stopSyncWhere(what string, match func(discover.Class) bool) (int, 
 // ---- other PCs ---------------------------------------------------------------
 
 type AvailableView struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Path   string `json:"path"`
-	From   string `json:"from"`
-	Reason string `json:"reason"` // a meta.Skip* reason, or meta.Pending
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Path    string `json:"path"`
+	From    string `json:"from"`
+	Reason  string `json:"reason"`  // a meta.Skip* reason, or meta.Pending
 	Kind    string `json:"kind"`    // mod folders: mods.Kind*; "launcher" for a launcher's own data
 	ModGame string `json:"modGame"` // … and the mod manager's game id
+	SizeGB  int    `json:"sizeGB"`  // as the other PC published it (0 = unknown)
+	// UnknownPlace: it waits because it isn't a known save folder of the
+	// game on this PC (reason "ask"), not only because of its size.
+	UnknownPlace bool `json:"unknownPlace"`
 }
 
 // Available lists games your other PCs sync that this PC doesn't.
@@ -900,7 +904,8 @@ func (a *App) Available() ([]AvailableView, error) {
 		if v.Launcher != "" {
 			kind = "launcher" // the launcher adds it itself
 		}
-		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: kind, ModGame: v.ModGame})
+		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: kind, ModGame: v.ModGame, SizeGB: v.SizeGB,
+			UnknownPlace: v.UnknownPlace})
 	}
 	return out, nil
 }
@@ -928,7 +933,11 @@ func (a *App) SyncAvailable(id string) error {
 			if err := paths.CheckSyncable(v.Path); err != nil {
 				return err
 			}
-			return a.share(ctx, c, v.ID, cmpOr(v.Label, v.ID), v.Path, false)
+			if err := a.share(ctx, c, v.ID, cmpOr(v.Label, v.ID), v.Path, false); err != nil {
+				return err
+			}
+			meta.DoneWaiting(v.ID)
+			return nil
 		}
 	}
 	return errors.New("that game is no longer offered by your other PCs")

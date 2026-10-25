@@ -46,6 +46,8 @@ type Folder struct {
 	// Solo: only this PC backs it up (backed up only, not synced), so every
 	// file in its backup is this PC's.
 	Solo bool `json:"-"`
+	// Mod: a mod folder, whose programs and scripts are backed up too.
+	Mod bool `json:"-"`
 	// Scoped limits the backup to the files in Only (paths relative to
 	// Path, forward slashes): a folder that holds much more than what
 	// Syncer looks after, like a game folder with deployed mods in it.
@@ -240,7 +242,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	lastPause := time.Now()
 	dst := filepath.Join(target, f.ID)
 	verRoot := filepath.Join(target, VersionsDir, f.ID, stamp)
-	m := LoadMatcher(f.Path, f.Exclude...)
+	m := f.Matcher()
 	sc := f.scope()
 	idx := loadIndex(f.ID)
 	newIdx := map[string]indexEntry{}

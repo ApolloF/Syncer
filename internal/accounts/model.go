@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/ApolloF/syncer/internal/conflict"
+	"github.com/ApolloF/syncer/internal/discover"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
 )
@@ -314,6 +315,44 @@ var resolveLive = func(r Record) (string, error) {
 
 // ---- combining what the PCs published -----------------------------------------
 
+// SyncedAt, when set, reports whether this PC already syncs game's saves (its
+// shared folder or one of its account folders) at path.
+var SyncedAt func(game, path string) bool
+
+// placeKnown reports whether a split game's saves may be kept at live, the
+// place a record from another PC names: the active account's folder is
+// created there without asking, so it must be where this PC keeps the
+// game's saves already, or one of the game's save folders in the game
+// database. A var so tests can put save folders in a temp dir.
+var placeKnown = func(r Record, live string) bool {
+	return SyncedAt != nil && SyncedAt(r.Game, live) || discover.KnownLocation(r.Label, live)
+}
+
+// peerPlaceOK reports whether a record from another PC may replace cur (had:
+// this PC has a record of the game) without moving the saves somewhere
+// this PC doesn't know as the game's.
+func peerPlaceOK(r, cur Record, had bool) bool {
+	live, ok := place(r)
+	if !ok {
+		return false
+	}
+	if had {
+		if old, ok := place(cur); ok && strings.EqualFold(filepath.Clean(old), filepath.Clean(live)) {
+			return true
+		}
+	}
+	return placeKnown(r, live)
+}
+
+// place is where a record keeps the game's saves on this PC, also when
+// that's reached through a link (the split then tells why it can't run).
+func place(r Record) (string, bool) {
+	if p, err := resolveLive(r); err == nil {
+		return p, true
+	}
+	return paths.Resolve(r.Root, r.Rel)
+}
+
 // Combine merges other PCs' published accounts and records into s: per
 // account the newest change wins (deleting is a change), per game the record
 // with the highest Gen. Invalid entries from peers are dropped. It reports
@@ -352,13 +391,13 @@ func (s *State) Combine(peers []Shared) bool {
 				continue
 			}
 			if i, ok := rec[r.Game]; ok {
-				if Later(r, s.Records[i]) {
+				if Later(r, s.Records[i]) && peerPlaceOK(r, s.Records[i], true) {
 					s.Records[i] = r
 					changed = true
 				}
 				continue
 			}
-			if len(s.Records) >= maxRecords {
+			if len(s.Records) >= maxRecords || !peerPlaceOK(r, Record{}, false) {
 				continue
 			}
 			rec[r.Game] = len(s.Records)

@@ -325,43 +325,57 @@ func trusted(raw string) bool {
 	return true
 }
 
-// resolve expands one manifest path to existing save directories.
-func resolve(raw, userName string, ex *existCache) []string {
+// expand turns one trusted manifest path into an absolute path pattern on
+// this PC, without looking at the disk (false for paths that depend on a
+// game's install folder or a root this PC lacks).
+func expand(raw, userName string) (string, bool) {
+	base, tail, ok := expandParts(raw, userName)
+	if !ok {
+		return "", false
+	}
+	return filepath.Clean(filepath.FromSlash(base + tail)), true
+}
+
+// expandParts is expand split into the root folder it starts in, a plain
+// path, and the rest (slashes as in the manifest), which may hold wildcards.
+func expandParts(raw, userName string) (base, tail string, ok bool) {
 	if !trusted(raw) {
-		return nil
+		return "", "", false
 	}
 	if strings.HasPrefix(raw, ubisoftPlaceholder) {
 		// savegames\<account>\<game id>: every account's folder for this
 		// game, never an account's whole folder.
 		raw = strings.ReplaceAll(raw, "<storeUserId>", "*")
 	}
-	var abs string
 	for ph, root := range placeholders {
 		if strings.HasPrefix(raw, ph) {
-			base := paths.Root(root)
-			if base == "" {
-				return nil
-			}
-			abs = base + raw[len(ph):]
+			base, tail = paths.Root(root), raw[len(ph):]
 			break
 		}
 	}
-	if abs == "" {
-		return nil
+	if base == "" {
+		return "", "", false
 	}
-	if strings.Contains(abs, "<") {
-		abs = strings.ReplaceAll(abs, "<osUserName>", userName)
+	if strings.Contains(tail, "<") {
+		tail = strings.ReplaceAll(tail, "<osUserName>", userName)
 		// Per-account subfolders: sync their parent so every account (and a
 		// different account id on another PC) is covered.
-		if i := strings.Index(abs, "<storeUserId>"); i >= 0 {
-			abs = abs[:strings.LastIndexAny(abs[:i], `/\`)]
+		if i := strings.Index(tail, "<storeUserId>"); i >= 0 {
+			tail = tail[:max(strings.LastIndexAny(tail[:i], `/\`), 0)]
 		}
-		if strings.Contains(abs, "<") {
-			return nil // install-dir based (<base>, <root>, <game>)
+		if strings.Contains(tail, "<") {
+			return "", "", false // install-dir based (<base>, <root>, <game>)
 		}
 	}
-	abs = filepath.Clean(filepath.FromSlash(abs))
+	return base, tail, true
+}
 
+// resolve expands one manifest path to existing save directories.
+func resolve(raw, userName string, ex *existCache) []string {
+	abs, ok := expand(raw, userName)
+	if !ok {
+		return nil
+	}
 	if !strings.ContainsAny(abs, "*?[") {
 		fi, ok := ex.stat(abs)
 		if !ok {

@@ -153,7 +153,7 @@ func LocalMatchesIndex(f Folder) bool {
 	if len(idx) == 0 {
 		return false
 	}
-	m := LoadMatcher(f.Path, f.Exclude...)
+	m := f.Matcher()
 	n := 0
 	same := true
 	err := filepath.WalkDir(f.Path, func(p string, d fs.DirEntry, err error) error {
@@ -204,7 +204,7 @@ func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) 
 		return 0, err
 	}
 	defer unlock()
-	m := LoadMatcher(f.Path, f.Exclude...)
+	m := f.Matcher()
 	stage := filepath.Join(f.Path, ".stversions", ".syncer-take-"+time.Now().Format(stampFmt))
 	keepStage := false // an original couldn't be put back: it's still in there
 	defer func() {

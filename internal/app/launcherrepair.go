@@ -312,6 +312,12 @@ func waitBackupLock(ctx context.Context, d time.Duration) (func(), error) {
 	}
 }
 
+// restoreMatcher skips what f's backup skips when files are copied back
+// into it: programs and scripts never come back into a save folder.
+func restoreMatcher(s store.Settings, f syncthing.Folder) *backup.Matcher {
+	return backup.Folder{ID: f.ID, Path: f.Path, Exclude: s.Exclude[dismissKey(f.Path)], Mod: programsAllowed(s, f.ID)}.Matcher()
+}
+
 // restoreLauncherData brings back what f's backup has that f is missing
 // (see planRestore). The caller holds the backup lock.
 func restoreLauncherData(f syncthing.Folder) (repairResult, error) {
@@ -328,8 +334,7 @@ func restoreLauncherData(f syncthing.Folder) (repairResult, error) {
 	if err := os.MkdirAll(f.Path, 0o755); err != nil {
 		return r, err
 	}
-	m := backup.LoadMatcher(f.Path, s.Exclude[dismissKey(f.Path)]...)
-	steps := planRestore(f.Path, copies, m.Ignored, fileCreated)
+	steps := planRestore(f.Path, copies, restoreMatcher(s, f).Ignored, fileCreated)
 	for _, st := range steps {
 		if err := putCopy(st.From.Path, filepath.Join(f.Path, st.To), st.From.Modified); err != nil {
 			logx.Printf("couldn't restore %s: %v", st.To, err)

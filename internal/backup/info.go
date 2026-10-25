@@ -211,10 +211,11 @@ func LabelFromID(id string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// Newest returns the newest file time in dir, skipping what the backup
-// skips. Zero when there's nothing.
-func Newest(dir string, exclude []string) time.Time {
-	m := LoadMatcher(dir, exclude...)
+// Newest returns the newest file time in f's folder, skipping what its
+// backup skips. Zero when there's nothing.
+func (f Folder) Newest() time.Time {
+	dir := f.Path
+	m := f.Matcher()
 	var newest time.Time
 	n := 0
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {

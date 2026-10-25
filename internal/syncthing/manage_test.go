@@ -108,3 +108,15 @@ func TestInstallErrorHasCauseAndManualLink(t *testing.T) {
 		t.Errorf("winget's own message missing: %q", msg)
 	}
 }
+
+// Syncthing must not create its own "Sync" folder in the profile, and must
+// start whatever its version: 2.x refuses flags it doesn't know.
+func TestStartCommandSkipsTheDefaultFolder(t *testing.T) {
+	cmd := startCommand(`C:\st\syncthing.exe`)
+	if !slices.Contains(cmd.Env, "STNODEFAULTFOLDER=1") {
+		t.Errorf("env lacks STNODEFAULTFOLDER=1")
+	}
+	if want := []string{`C:\st\syncthing.exe`, "--no-browser", "--no-restart"}; !slices.Equal(cmd.Args, want) {
+		t.Errorf("args = %v, want %v", cmd.Args, want)
+	}
+}

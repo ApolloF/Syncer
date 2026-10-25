@@ -119,6 +119,14 @@ type LocalFolder struct {
 	CopiedFrom string `json:"copiedFrom,omitempty"`
 }
 
+// WaitingFolder is a folder from another PC (named From) that waits for the
+// user's OK.
+type WaitingFolder struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	From  string `json:"from"`
+}
+
 // BackupRun is the outcome of the last backup.
 type BackupRun struct {
 	Started  time.Time `json:"started"`
@@ -194,6 +202,9 @@ type State struct {
 	// SyncerPCs are the linked devices known to run Syncer (by device id).
 	// Syncthing may be linked to other devices too, for other things.
 	SyncerPCs map[string]bool `json:"syncerPCs,omitempty"`
+	// Waiting are the folders other PCs sync that wait for the user's OK
+	// before they sync here too (see meta.SkipAsk).
+	Waiting []WaitingFolder `json:"waiting,omitempty"`
 	// JoinRequests are linked devices that offer Syncer's shared settings
 	// and wait for the user to allow them as one of their PCs; IgnoredPCs
 	// are those the user turned down.

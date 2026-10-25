@@ -18,6 +18,27 @@ import (
 // looks at the folders.
 var ApplyAccounts func(ctx context.Context, c *syncthing.Client, me string, others []string) error
 
+func init() { accounts.SyncedAt = syncedAt }
+
+// syncedAt reports whether this PC syncs game's shared folder at path, by
+// the folder list of the last reconcile. Account folders don't count (one
+// may sit in the accounts' vault; the one at the save folder is where this
+// PC's own record of the split already says), nor do mod folders or a
+// launcher's data, which aren't a game's saves.
+func syncedAt(game, path string) bool {
+	s := store.LoadSettings()
+	if _, mod := s.Mods[game]; mod || s.Launchers[game] != "" {
+		return false
+	}
+	cf, _ := CachedFolders()
+	for _, f := range cf {
+		if f.ID == game && samePath(f.Path, path) {
+			return true
+		}
+	}
+	return false
+}
+
 // combineAccounts takes in the accounts and split games other PCs published.
 func combineAccounts(me string) {
 	var peers []accounts.Shared

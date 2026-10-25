@@ -293,6 +293,8 @@ export namespace app {
 	    reason: string;
 	    kind: string;
 	    modGame: string;
+	    sizeGB: number;
+	    unknownPlace: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AvailableView(source);
@@ -307,6 +309,8 @@ export namespace app {
 	        this.reason = source["reason"];
 	        this.kind = source["kind"];
 	        this.modGame = source["modGame"];
+	        this.sizeGB = source["sizeGB"];
+	        this.unknownPlace = source["unknownPlace"];
 	    }
 	}
 	export class BulkResult {
@@ -901,6 +905,7 @@ export namespace app {
 	    version: string;
 	    update?: UpdateInfo;
 	    versionGaps: VersionGap[];
+	    waiting: store.WaitingFolder[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Overview(source);
@@ -931,6 +936,7 @@ export namespace app {
 	        this.version = source["version"];
 	        this.update = this.convertValues(source["update"], UpdateInfo);
 	        this.versionGaps = this.convertValues(source["versionGaps"], VersionGap);
+	        this.waiting = this.convertValues(source["waiting"], store.WaitingFolder);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1580,6 +1586,22 @@ export namespace store {
 		    }
 		    return a;
 		}
+	}
+	export class WaitingFolder {
+	    id: string;
+	    label: string;
+	    from: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WaitingFolder(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.from = source["from"];
+	    }
 	}
 
 }

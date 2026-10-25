@@ -105,11 +105,12 @@ func newWorld(t *testing.T) *world {
 	root := t.TempDir()
 	w := &world{t: t, root: root, live: filepath.Join(root, "Saves", "Stardew"), hist: filepath.Join(root, "history"),
 		st: &fakeST{folders: map[string]syncthing.Folder{}}}
-	oldDir, oldLocal, oldResolve := dir, localRoot, resolveLive
+	oldDir, oldLocal, oldResolve, oldKnown := dir, localRoot, resolveLive, placeKnown
 	dir = func() string { return filepath.Join(root, "appdata") }
 	localRoot = func() string { return filepath.Join(root, "local") }
 	resolveLive = func(r Record) (string, error) { return filepath.Join(root, filepath.FromSlash(r.Rel)), nil }
-	t.Cleanup(func() { dir, localRoot, resolveLive = oldDir, oldLocal, oldResolve; crashHook = nil })
+	placeKnown = func(Record, string) bool { return true } // the save folders are in a temp dir
+	t.Cleanup(func() { dir, localRoot, resolveLive, placeKnown = oldDir, oldLocal, oldResolve, oldKnown; crashHook = nil })
 	_ = os.MkdirAll(dir(), 0o755)
 	w.env = Env{
 		ST: w.st,
