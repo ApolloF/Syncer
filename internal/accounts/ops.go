@@ -106,15 +106,30 @@ func journalFile() string { return filepath.Join(dir(), "accounts-op.json") }
 
 // PendingOp returns the unfinished operation, if any.
 func PendingOp() (Journal, bool) {
+	j, ok, _ := readJournal()
+	return j, ok
+}
+
+// readJournal is PendingOp that also says when the journal is there but
+// can't be read. Every step rewrites it, so a read can meet the moment it's
+// replaced: such errors are retried a few times first.
+func readJournal() (Journal, bool, error) {
 	b, err := os.ReadFile(journalFile())
+	for wait := 10 * time.Millisecond; err != nil && !errors.Is(err, os.ErrNotExist) && wait <= 160*time.Millisecond; wait *= 2 {
+		time.Sleep(wait)
+		b, err = os.ReadFile(journalFile())
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return Journal{}, false, nil
+	}
 	if err != nil {
-		return Journal{}, false
+		return Journal{}, false, err
 	}
 	var j Journal
 	if json.Unmarshal(b, &j) != nil || j.Kind == "" {
-		return Journal{}, false
+		return Journal{}, false, nil
 	}
-	return j, true
+	return j, true, nil
 }
 
 func (j *Journal) save() error {
@@ -306,14 +321,32 @@ func (fs folderSet) atLive(game, live string) (syncthing.Folder, string, bool) {
 }
 
 // pause stops Syncthing on folders while their files move, remembering
-// which were paused already.
+// which were paused already. A folder the game hold paused counts as not
+// paused: the operation takes it over and resumes it when it's done.
 func (j *Journal) pause(ctx context.Context, st Syncthing, ids ...string) error {
+	if j.WasPaused == nil {
+		j.WasPaused = map[string]bool{}
+	}
+	// Written first: from here on the game hold leaves these folders alone
+	// (see OpFolders), so the hold's list can't change under the takeover.
+	if err := j.save(); err != nil {
+		return err
+	}
+	held := map[string]bool{}
+	// Taken under the state lock, so a hold that is resuming a folder right
+	// now finishes before the folder's state is read below.
+	if err := store.UpdateState(func(s *store.State) {
+		for _, id := range ids {
+			if slices.Contains(s.GamePaused, id) {
+				held[id] = true
+			}
+		}
+	}); err != nil {
+		return err
+	}
 	fs, err := folders(ctx, st)
 	if err != nil {
 		return err
-	}
-	if j.WasPaused == nil {
-		j.WasPaused = map[string]bool{}
 	}
 	var todo []string
 	for _, id := range ids {
@@ -322,7 +355,7 @@ func (j *Journal) pause(ctx context.Context, st Syncthing, ids ...string) error 
 			continue
 		}
 		if _, seen := j.WasPaused[id]; !seen {
-			j.WasPaused[id] = f.Paused
+			j.WasPaused[id] = f.Paused && !held[id]
 		}
 		if !f.Paused {
 			todo = append(todo, id)
@@ -330,6 +363,15 @@ func (j *Journal) pause(ctx context.Context, st Syncthing, ids ...string) error 
 	}
 	if err := j.save(); err != nil {
 		return err
+	}
+	// Dropped from the hold's list only once the journal says to resume
+	// them: a crash in between leaves them to the hold, not paused for good.
+	if len(held) > 0 {
+		if err := store.UpdateState(func(s *store.State) {
+			s.GamePaused = slices.DeleteFunc(s.GamePaused, func(id string) bool { return held[id] })
+		}); err != nil {
+			return err
+		}
 	}
 	for _, id := range todo {
 		if err := st.PatchFolder(ctx, id, map[string]any{"paused": true}); err != nil {
@@ -340,13 +382,17 @@ func (j *Journal) pause(ctx context.Context, st Syncthing, ids ...string) error 
 }
 
 // resume lets Syncthing work on folders again, except those that were
-// paused before the operation.
+// paused before the operation (or that it never paused).
 func (j *Journal) resume(ctx context.Context, st Syncthing, ids ...string) error {
+	ours := func(id string) bool {
+		was, seen := j.WasPaused[id]
+		return seen && !was
+	}
 	if store.LoadSettings().Paused() {
 		// "Pause syncing" started meanwhile: these resume when it ends.
 		store.UpdateState(func(s *store.State) {
 			for _, id := range ids {
-				if !j.WasPaused[id] && !slices.Contains(s.PausedFolders, id) {
+				if ours(id) && !slices.Contains(s.PausedFolders, id) {
 					s.PausedFolders = append(s.PausedFolders, id)
 				}
 			}
@@ -354,13 +400,28 @@ func (j *Journal) resume(ctx context.Context, st Syncthing, ids ...string) error
 		return nil
 	}
 	var errs []error
+	var failed []string
 	for _, id := range ids {
-		if j.WasPaused[id] {
+		if !ours(id) {
 			continue
 		}
 		if err := st.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil {
 			errs = append(errs, err)
+			failed = append(failed, id)
 		}
+	}
+	if len(failed) > 0 {
+		// An operation that gives up clears its journal right after: left
+		// for the pause's background pass to resume, or nothing would (it
+		// may have taken them from the game hold).
+		fs, err := folders(ctx, st)
+		store.UpdateState(func(s *store.State) {
+			for _, id := range failed {
+				if _, ok := fs[id]; (ok || err != nil) && !slices.Contains(s.PausedFolders, id) {
+					s.PausedFolders = append(s.PausedFolders, id)
+				}
+			}
+		})
 	}
 	return errors.Join(errs...)
 }
@@ -1231,11 +1292,16 @@ func isLink(p string) bool {
 }
 
 // OpFolders lists the Syncthing folders an unfinished operation works on:
-// they must stay paused until it's done (see Journal.pause).
-func OpFolders() []string {
-	j, ok := PendingOp()
+// they must stay paused until it's done (see Journal.pause), and neither a
+// pause the user set nor the game hold may pause or resume them meanwhile.
+// An error means the journal can't be read: any folder may be one of them.
+func OpFolders() ([]string, error) {
+	j, ok, err := readJournal()
+	if err != nil {
+		return nil, fmt.Errorf("can't tell which folders saves are moving in: %w", err)
+	}
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	ids := []string{j.Record.Game}
 	for _, a := range j.Record.Accounts {
@@ -1244,7 +1310,7 @@ func OpFolders() []string {
 	for _, m := range j.Moves {
 		ids = append(ids, m.InID, m.OutID)
 	}
-	return ids
+	return ids, nil
 }
 
 // Locked runs fn while no account operation can start, e.g. to add a
