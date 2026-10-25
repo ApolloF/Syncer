@@ -88,20 +88,27 @@ func TestKeeperWaitsOnlyOnceForManyFiles(t *testing.T) {
 	old := conflictKeepWait
 	conflictKeepWait = 300 * time.Millisecond
 	defer func() { conflictKeepWait = old }()
+	// Count the waits rather than time them: a slow runner takes longer
+	// per file than the wait itself.
+	waits := 0
+	keepWithin = func(d time.Duration, t, id, abs, rel string, move bool) (string, error) {
+		waits++
+		return backup.KeepWithin(d, t, id, abs, rel, move)
+	}
+	defer func() { keepWithin = backup.KeepWithin }()
 	src2 := filepath.Join(filepath.Dir(src), "other.dat")
 	if err := os.WriteFile(src2, []byte("losing 2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	keep, _ := keeper(f)
-	start := time.Now()
 	for _, p := range []string{src, src2} {
 		put, err := keep(p, filepath.Base(p), true)
 		if err != nil || !strings.Contains(put, ".stversions") {
 			t.Fatalf("put = %q, err = %v, want .stversions", put, err)
 		}
 	}
-	if d := time.Since(start); d > 550*time.Millisecond {
-		t.Errorf("two files took %s, want about one wait (300ms)", d)
+	if waits != 1 {
+		t.Errorf("waited %d times for two files, want once", waits)
 	}
 }

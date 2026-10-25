@@ -142,6 +142,49 @@ func TestCleanMarkersStignore(t *testing.T) {
 	}
 }
 
+func TestForgetBackupReportsOtherPC(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	target := t.TempDir()
+	if _, err := store.UpdateSettings(func(s *store.Settings) { s.BackupRoot = target }); err != nil {
+		t.Fatal(err)
+	}
+	id := "shared-game"
+	for p, c := range map[string]string{
+		filepath.Join(target, id, "a.sav"):                     "a",
+		filepath.Join(target, backup.InfoDir, id, "zz-b.json"): `{"id":"shared-game","label":"Shared","host":"SYNCER-B"}`,
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other, err := forgetBackup(id, true)
+	if err != nil || other != "SYNCER-B" {
+		t.Fatalf("forgetBackup = %q, %v", other, err)
+	}
+	if _, err := os.Stat(filepath.Join(target, id, "a.sav")); err != nil {
+		t.Error("backup deleted while another PC uses it")
+	}
+	if got := removeMessage(true, other); got != "SYNCER-B still backs it up here, so the backup stays" {
+		t.Errorf("message %q", got)
+	}
+	if removeMessage(true, "") != "Backup deleted" || removeMessage(false, "") != "" {
+		t.Error("removeMessage")
+	}
+
+	if err := os.Remove(filepath.Join(target, backup.InfoDir, id, "zz-b.json")); err != nil {
+		t.Fatal(err)
+	}
+	if other, err := forgetBackup(id, true); err != nil || other != "" {
+		t.Fatalf("forgetBackup = %q, %v", other, err)
+	}
+	if _, err := os.Stat(filepath.Join(target, id)); err == nil {
+		t.Error("backup left although no other PC uses it")
+	}
+}
+
 func TestKeepHistoryCarriesTheBackupTimeToTheNewID(t *testing.T) {
 	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
 	defer paths.SetRootForTest(paths.Local, t.TempDir())()

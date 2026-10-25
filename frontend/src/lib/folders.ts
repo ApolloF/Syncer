@@ -4,6 +4,9 @@ import { bytes, ago } from './fmt'
 /** A time from Go; the zero time means "never". */
 export const isTime = (t: any) => !!t && new Date(t).getFullYear() > 2000
 
+/** Whether a typed confirmation matches a game's name (case and outer spaces don't matter). */
+export const sameName = (typed: string, name: string) => !!name.trim() && typed.trim().toLowerCase() === name.trim().toLowerCase()
+
 export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 
 export function backupLine(f: app.FolderView): string {
