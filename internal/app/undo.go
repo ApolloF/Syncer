@@ -200,7 +200,7 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 	// Last, since it can be slow on a cloud drive: everything above must not
 	// wait on it.
 	for _, cv := range converted {
-		keepHistory(ctx, s, cv[0], cv[1])
+		_ = keepHistory(ctx, s, cv[0], cv[1]) // logged there
 	}
 	if err := meta.ForgetCache(); err != nil {
 		note("Couldn't remove the folder cache: %v", err)

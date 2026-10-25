@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -183,7 +184,9 @@ type Overview struct {
 	Features   FeatureFlags     `json:"features"`
 	Notices    []string         `json:"notices"` // one-time notices to show (see activeNotices)
 	Target     string           `json:"target"`
-	LastBackup *store.BackupRun `json:"lastBackup"`
+	LastBackup *store.BackupRun `json:"lastBackup"` // the last attempt, failed or not
+	// LastSuccess is when a backup last finished without errors; zero if never.
+	LastSuccess time.Time `json:"lastSuccess"`
 	BackingUp  bool             `json:"backingUp"`
 	Gaming     bool             `json:"gaming"` // automatic backups are holding off right now
 	Paused     bool             `json:"paused"` // syncing and automatic backups are paused (until settings.pausedUntil)
@@ -206,12 +209,13 @@ type FolderIssue struct {
 
 func (a *App) Overview() Overview {
 	s := store.LoadSettings()
-	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: store.LoadState().LastBackup,
+	st0 := store.LoadState()
+	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: st0.LastBackup, LastSuccess: st0.LastSuccess,
 		Paused: s.Paused(), Version: version, Update: availableUpdate()}
 	o.Target, _ = backupTarget(s)
 	o.Google = googleView(s)
 	o.Features = buildFeatures()
-	o.Notices = activeNotices(s, store.LoadState())
+	o.Notices = activeNotices(s, st0)
 	o.Syncthing.Installed = syncthing.FindExe() != ""
 	a.mu.Lock()
 	o.BackingUp = a.backingUp
@@ -793,6 +797,9 @@ func (a *App) Log() []string { return logx.Tail(200) }
 
 func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	old := store.LoadSettings()
+	if err := checkBackupRoot(in.BackupRoot); err != nil {
+		return old, err
+	}
 	s, err := store.UpdateSettings(func(s *store.Settings) { applySettingsInput(s, in, old) })
 	if err != nil {
 		return s, err
@@ -819,6 +826,15 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		go a.publishSettings()
 	}
 	return s, nil
+}
+
+// checkBackupRoot rejects a backup folder that isn't a full path: a relative
+// one would end up wherever the app happens to run.
+func checkBackupRoot(root string) error {
+	if root != "" && !filepath.IsAbs(root) {
+		return errors.New("the backup folder must be a full path, like D:/GameSaveBackup")
+	}
+	return nil
 }
 
 // applySettingsInput takes the settings the UI sends into s, the stored ones
