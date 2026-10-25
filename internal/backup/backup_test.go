@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -546,5 +547,61 @@ func TestCopyVersionsKeepsLeftoverTempVersions(t *testing.T) {
 	}
 	if read(t, filepath.Join(target, VersionsDir, "new", stamp, "a.json")) != "stuck" {
 		t.Error("stuck version not copied under its real name")
+	}
+}
+
+func TestCopyHistoryLinksOrCopies(t *testing.T) {
+	const stamp = "2026-01-02_030405"
+	setup := func() string {
+		target := t.TempDir()
+		write(t, filepath.Join(target, "old", "a.sav"), "a")
+		write(t, filepath.Join(target, VersionsDir, "old", stamp, "a.sav"), "v0")
+		write(t, filepath.Join(target, VersionsDir, "old", PinnedDir, stamp), "")
+		return target
+	}
+	same := func(target string, rel ...string) bool {
+		a, err := os.Stat(filepath.Join(append([]string{target, "old"}, rel...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.Stat(filepath.Join(append([]string{target, "new"}, rel...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return os.SameFile(a, b)
+	}
+	// The versions tree is <target>\.versions\<id>, so the id comes second there.
+	sameVersion := func(target string, rel ...string) bool {
+		a, _ := os.Stat(filepath.Join(append([]string{target, VersionsDir, "old"}, rel...)...))
+		b, err := os.Stat(filepath.Join(append([]string{target, VersionsDir, "new"}, rel...)...))
+		if a == nil || err != nil {
+			t.Fatalf("missing %v", rel)
+		}
+		return os.SameFile(a, b)
+	}
+
+	target := setup()
+	if err := CopyHistory(context.Background(), target, "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if !same(target, "a.sav") || !sameVersion(target, stamp, "a.sav") {
+		t.Error("files not linked")
+	}
+	if sameVersion(target, PinnedDir, stamp) {
+		t.Error("pin marker must be its own file")
+	}
+
+	orig := linkFile
+	defer func() { linkFile = orig }()
+	linkFile = func(string, string) error { return errors.New("no links here") }
+	target = setup()
+	if err := CopyHistory(context.Background(), target, "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if same(target, "a.sav") || read(t, filepath.Join(target, "new", "a.sav")) != "a" {
+		t.Error("fallback did not copy")
+	}
+	if sameVersion(target, stamp, "a.sav") || read(t, filepath.Join(target, VersionsDir, "new", stamp, "a.sav")) != "v0" {
+		t.Error("version not copied")
 	}
 }
