@@ -93,6 +93,16 @@ jobs:
       id-token: write # sign the provenance
       attestations: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false # this job holds the signing key; no restored cache may run in it
+
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: Syncer
@@ -101,6 +111,26 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum Syncer.exe Syncer-amd64-installer.exe | tee SHA256SUMS.txt
+
+      - name: Sign the checksums
+        # The app installs only an exe whose hash is in a sums file signed with
+        # this key (see RELEASING.md); a release without it must not be made.
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::The RELEASE_SIGNING_KEY secret is empty."
+            exit 1
+          fi
+          go run ./tools/release-sign -sign dist/SHA256SUMS.txt -tag "$GITHUB_REF_NAME" -key-env RELEASE_SIGNING_KEY
+
+      - name: Check the signature against the key in the app
+        # Fails when the secret doesn't belong to the public key in pubkey.go
+        # (or that is still the placeholder): such a release would install nowhere.
+        # A key-change release is signed with the old key: RELEASING.md says how.
+        env:
+          PUBKEY_FILE: ${{ vars.RELEASE_PUBKEY_FILE }}
+        run: go run ./tools/release-sign -verify dist/SHA256SUMS.txt -tag "$GITHUB_REF_NAME" -pubfile "${PUBKEY_FILE:-internal/update/pubkey.go}"
 
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
@@ -121,3 +151,4 @@ jobs:
             dist/Syncer-amd64-installer.exe
             dist/Syncer.exe
             dist/SHA256SUMS.txt
+            dist/SHA256SUMS.txt.sig
