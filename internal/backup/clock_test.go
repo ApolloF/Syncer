@@ -7,13 +7,32 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ApolloF/syncer/internal/paths"
 )
 
 // Tests don't ask the network for the time: the clock is right unless a test
-// says otherwise.
+// says otherwise. Nor do they touch this PC's own app folders: the backup
+// lock lives there, and a test run elsewhere on the PC would hold it.
 func TestMain(m *testing.M) {
 	netTime = func(context.Context) (time.Time, error) { return time.Now(), nil }
-	os.Exit(m.Run())
+	os.Exit(runIsolated(m))
+}
+
+func runIsolated(m *testing.M) int {
+	dir, err := os.MkdirTemp("", "syncer-backup-test-")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	for _, root := range []string{paths.Roaming, paths.Local} {
+		d := filepath.Join(dir, root)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			panic(err)
+		}
+		defer paths.SetRootForTest(root, d)()
+	}
+	return m.Run()
 }
 
 func setNetTime(t *testing.T, f func(context.Context) (time.Time, error)) {

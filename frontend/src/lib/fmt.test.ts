@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ago, bytes, choices, err, pausedUntil, tomorrowMorning } from './fmt'
+import { ago, bytes, choices, err, lastBackupLines, pausedUntil, tomorrowMorning } from './fmt'
 
 describe('bytes', () => {
   it('uses 1024-based units', () => {
@@ -91,5 +91,28 @@ describe('choices', () => {
   })
   it('adds a value from elsewhere in order', () => {
     expect(choices([7, 14, 30, 90], 45)).toEqual([7, 14, 30, 45, 90])
+  })
+})
+
+describe('lastBackupLines', () => {
+  const now = new Date(2026, 9, 3, 12, 0, 0)
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(now) })
+  afterEach(() => { vi.useRealTimers() })
+  const before = (s: number) => new Date(now.getTime() - s * 1000)
+
+  it('says no backup yet before the first success', () => {
+    expect(lastBackupLines('0001-01-01T00:00:00Z', undefined)).toEqual({ when: 'No backup yet', failed: '' })
+    expect(lastBackupLines(undefined, { ok: false, finished: before(7200), errors: ['disk full'] }))
+      .toEqual({ when: 'No backup yet', failed: 'Last attempt failed 2 h ago · disk full' })
+  })
+  it('shows the last success and no second line when the latest run worked', () => {
+    expect(lastBackupLines(before(300), { ok: true, finished: before(300) })).toEqual({ when: '5 min ago', failed: '' })
+  })
+  it('keeps the last success when the latest run failed', () => {
+    expect(lastBackupLines(before(86400), { ok: false, finished: before(7200), errors: ['Stardew: access denied', 'other'] }))
+      .toEqual({ when: '1 day ago', failed: 'Last attempt failed 2 h ago · Stardew: access denied' })
+  })
+  it('leaves out the reason when there is none', () => {
+    expect(lastBackupLines(before(86400), { ok: false, finished: before(7200), errors: [] }).failed).toBe('Last attempt failed 2 h ago')
   })
 })

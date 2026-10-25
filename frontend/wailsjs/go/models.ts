@@ -898,6 +898,8 @@ export namespace app {
 	    notices: string[];
 	    target: string;
 	    lastBackup?: store.BackupRun;
+	    // Go type: time
+	    lastSuccess: any;
 	    backingUp: boolean;
 	    gaming: boolean;
 	    paused: boolean;
@@ -929,6 +931,7 @@ export namespace app {
 	        this.notices = source["notices"];
 	        this.target = source["target"];
 	        this.lastBackup = this.convertValues(source["lastBackup"], store.BackupRun);
+	        this.lastSuccess = this.convertValues(source["lastSuccess"], null);
 	        this.backingUp = source["backingUp"];
 	        this.gaming = source["gaming"];
 	        this.paused = source["paused"];

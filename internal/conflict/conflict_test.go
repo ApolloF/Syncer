@@ -1,6 +1,7 @@
 package conflict
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,5 +220,30 @@ func TestStVersionsKeepNeverReplaces(t *testing.T) {
 	}
 	if !got["one"] || !got["two"] {
 		t.Errorf("kept: %v", got)
+	}
+}
+
+func TestAttributeUsesTheCopysOwnEntry(t *testing.T) {
+	// The suffix names the PC that won (BBBBBBB); the copy was renamed, and
+	// so made, by the losing PC (AAAAAAA).
+	cs := []Conflict{
+		{Rel: "slot1.sav", Copy: "slot1.sync-conflict-20260925-143012-BBBBBBB.sav", Device: "BBBBBBB"},
+		{Rel: "slot2.sav", Copy: "slot2.sync-conflict-20260925-143012-BBBBBBB.sav", Device: "BBBBBBB"},
+	}
+	Attribute(cs, func(copyRel string) (string, error) {
+		if strings.HasPrefix(copyRel, "slot2") {
+			return "", errors.New("not in the database")
+		}
+		return "AAAAAAA", nil
+	})
+	if cs[0].Device != "AAAAAAA" || cs[0].Guessed {
+		t.Errorf("looked up copy = %q guessed %v, want AAAAAAA", cs[0].Device, cs[0].Guessed)
+	}
+	if cs[1].Device != "BBBBBBB" || !cs[1].Guessed {
+		t.Errorf("failed lookup = %q guessed %v, want the suffix, guessed", cs[1].Device, cs[1].Guessed)
+	}
+	got := FromDevice(cs, "AAAAAAA")
+	if len(got) != 1 || got[0].Rel != "slot1.sav" {
+		t.Errorf("FromDevice(A) = %v, want only slot1.sav", got)
 	}
 }

@@ -60,7 +60,7 @@ func Retire(p string) (string, error) { return retire(p) }
 // retire moves p out of the way into the vault's .trash on the same drive
 // (never deleting anything). It returns where it went.
 func retire(p string) (string, error) {
-	base := filepath.Join(vaultBase(p), ".trash", time.Now().Format("2006-01-02_150405.000000000"))
+	base := filepath.Join(vaultBase(p), ".trash", time.Now().Format(trashStamp))
 	dst := filepath.Join(base, filepath.Base(p))
 	if err := os.MkdirAll(base, 0o755); err == nil {
 		if err := os.Rename(p, dst); err == nil {
@@ -73,6 +73,43 @@ func retire(p string) (string, error) {
 		return "", fmt.Errorf("could not move %s out of the way: %w", p, err)
 	}
 	return dst, nil
+}
+
+// trashStamp is the layout of a .trash entry's name (see retire).
+const trashStamp = "2006-01-02_150405.000000000"
+
+// trashMaxAge is how long a retired folder stays in the .trash: a restore
+// point is saved before every swap, so it is only a second copy.
+const trashMaxAge = 7 * 24 * time.Hour
+
+// now is the clock of the .trash sweep (a var for tests).
+var now = time.Now
+
+// sweepTrash deletes the entries of vault\.trash retired more than
+// trashMaxAge ago, going by the stamp in their names (a rename keeps the
+// folder's own mtime, which says nothing about when it was retired). Links
+// are removed, never followed. Entries it can't read or delete stay; the
+// first error is returned for the log.
+func sweepTrash(vault string) error {
+	trash := filepath.Join(vault, ".trash")
+	es, err := os.ReadDir(trash)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var first error
+	for _, e := range es {
+		at, err := time.ParseInLocation(trashStamp, e.Name(), time.Local)
+		if err != nil || now().Sub(at) < trashMaxAge {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(trash, e.Name())); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // ---- trees ---------------------------------------------------------------------

@@ -22,7 +22,7 @@ import (
 // on its own; a folder labelled after a game but somewhere else, or a big
 // one, waits for the user's OK.
 func TestPeerFoldersOutsideKnownSavesWait(t *testing.T) {
-	base := t.TempDir()
+	base := longTempDir(t)
 	roaming := filepath.Join(base, `AppData\Roaming`)
 	for root, dir := range map[string]string{paths.Home: base, paths.Roaming: roaming,
 		paths.Local: filepath.Join(base, `AppData\Local`), paths.LocalLow: filepath.Join(base, `AppData\LocalLow`),
@@ -114,4 +114,15 @@ func TestPeerFoldersOutsideKnownSavesWait(t *testing.T) {
 	if got := store.LoadState().Waiting; !slices.Equal(got, wantWaiting[:1]) {
 		t.Errorf("waiting after raising the limit = %+v, want %+v", got, wantWaiting[:1])
 	}
+}
+
+// longTempDir is t.TempDir() with its long names: the temp folder can be
+// under a short-named profile (RUNNER~1 on CI), and known save
+// locations refuse short names.
+func longTempDir(t *testing.T) string {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

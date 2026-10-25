@@ -98,7 +98,12 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 // which would otherwise be thinning the same history, and returns ErrBusy
 // after that. It returns where the file was put.
 func Keep(target, id, src, rel string, move bool) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), keepWait)
+	return KeepWithin(keepWait, target, id, src, rel, move)
+}
+
+// KeepWithin is Keep with its own limit for the wait.
+func KeepWithin(wait time.Duration, target, id, src, rel string, move bool) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	unlock, err := waitLock(ctx)
 	if err != nil {
