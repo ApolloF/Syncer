@@ -86,6 +86,7 @@ type classEntry struct {
 type manifestIndex struct {
 	src    []Entry
 	byName map[string]Entry
+	byNorm map[string][]Entry // by normalize(name), as SameGame compares
 	byApp  map[int][]Entry
 	byUbi  map[int][]Entry // by Ubisoft game id
 }
@@ -94,10 +95,13 @@ func indexFor(es []Entry) *manifestIndex {
 	if i := classCache.idx; i != nil && len(i.src) == len(es) && (len(es) == 0 || &i.src[0] == &es[0]) {
 		return i
 	}
-	i := &manifestIndex{src: es, byName: map[string]Entry{}, byApp: map[int][]Entry{}, byUbi: map[int][]Entry{}}
+	i := &manifestIndex{src: es, byName: map[string]Entry{}, byNorm: map[string][]Entry{}, byApp: map[int][]Entry{}, byUbi: map[int][]Entry{}}
 	for _, e := range es {
 		if _, ok := i.byName[strings.ToLower(e.Name)]; !ok {
 			i.byName[strings.ToLower(e.Name)] = e
+		}
+		if n := normalize(e.Name); n != "" {
+			i.byNorm[n] = append(i.byNorm[n], e)
 		}
 		if e.SteamID > 0 {
 			i.byApp[e.SteamID] = append(i.byApp[e.SteamID], e)

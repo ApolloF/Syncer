@@ -20,7 +20,7 @@ import (
 // from the mirror or from the versions taken when they are later replaced.
 // It returns how many files were saved.
 func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
-	m := LoadMatcher(f.Path, f.Exclude...)
+	m := f.Matcher()
 	sc := f.scope()
 	mirror := filepath.Join(target, f.ID)
 	var rels []string

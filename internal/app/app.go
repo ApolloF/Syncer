@@ -195,6 +195,8 @@ type Overview struct {
 	Update     *UpdateInfo      `json:"update"` // a newer release, if one is out
 	// VersionGaps: linked PCs running an older or newer Syncer than this one.
 	VersionGaps []VersionGap `json:"versionGaps"`
+	// Waiting: folders from other PCs that wait for the user's OK.
+	Waiting []store.WaitingFolder `json:"waiting"`
 }
 
 // FolderIssue is a synced folder Syncthing has a problem with, and what it is.
@@ -210,7 +212,7 @@ type FolderIssue struct {
 func (a *App) Overview() Overview {
 	s := store.LoadSettings()
 	st0 := store.LoadState()
-	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: st0.LastBackup, LastSuccess: st0.LastSuccess,
+	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: st0.LastBackup, LastSuccess: st0.LastSuccess, Waiting: st0.Waiting,
 		Paused: s.Paused(), Version: version, Update: availableUpdate()}
 	o.Target, _ = backupTarget(s)
 	o.Google = googleView(s)

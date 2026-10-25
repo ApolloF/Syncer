@@ -11,6 +11,9 @@
     modsFound: null as app.GameView[] | null,
     shares: [] as app.VortexShareView[],
   })
+
+  /** Opens Games on Elsewhere, where folders from other PCs wait. */
+  export function showElsewhere() { cache.tab = 'other' }
 </script>
 
 <script lang="ts">
@@ -23,7 +26,7 @@
   import RestoreDialog from '../lib/RestoreDialog.svelte'
   import { ui, attempt, fail, refresh, toast, accountName, accountColor } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
-  import { isTime, plural, backupLine, stateOf, sameName } from '../lib/folders'
+  import { isTime, plural, backupLine, stateOf, waitReason, sameName } from '../lib/folders'
   import { conflictBadge, conflictPCs as pcsOf, currentLabel, otherLabel } from '../lib/conflicts'
   import { byModKind, modGameName, modPhase } from '../lib/mods'
   import { modsAvailable, modsPageOn } from '../lib/features'
@@ -856,6 +859,7 @@
     <div class="grow">
       <div class="name ellipsis" title={a.label}>{a.label}</div>
       <div class="path faint ellipsis" title={a.path}>{a.path}</div>
+      {#if a.reason === 'ask'}{@const why = waitReason(a, o?.settings.autoAddMaxGB)}<div class="path faint ellipsis" title={why}>{why}</div>{/if}
     </div>
     <span class="meta faint">from {a.from}</span>
     {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>
@@ -866,6 +870,7 @@
     {:else if a.reason === 'link'}<span class="pill warn" title="On this PC this folder is reached through a link (a junction or symbolic link) to another place. Syncer only syncs folders where they really are.">Linked folder here</span>
     {:else if a.reason === 'copy'}<span class="pill" title="An emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
     {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
+    {:else if a.reason === 'ask'}<span class="pill warn" title="Sync it here only if you know what it is.">Waiting for your OK</span>
     {:else if a.reason === 'mods-off'}<span class="pill" title="Turn on “Find installed mods” in Settings to sync mod folders on this PC.">Mods off here</span>
     {:else if a.reason === 'mods-experimental-off'}<span class="pill" title="Turn on “Sync deployed mods in the game folder” in Settings to receive deployed mods on this PC.">Experimental option off</span>
     {:else if a.reason === 'mod-game-missing'}<span class="pill warn" title="Vortex on this PC doesn't manage this game yet. Add the game in Vortex here (with its default or your own mods folder), then it can sync.">Not in Vortex here</span>

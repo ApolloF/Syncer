@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ApolloF/syncer/internal/backup"
+	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
@@ -172,5 +173,20 @@ func TestFileCreatedIsKnownOnWindows(t *testing.T) {
 	at, ok := fileCreated(p)
 	if !ok || time.Since(at) > time.Hour {
 		t.Errorf("created %v (%v), want just now", at, ok)
+	}
+}
+
+// A repair copies files from the backup into the live folder: a program
+// that got into the backup somehow isn't one of them.
+func TestRestorePlanSkipsPrograms(t *testing.T) {
+	dir, target := t.TempDir(), t.TempDir()
+	old := time.Now().Add(-time.Hour)
+	writeAt(t, filepath.Join(target, "f", "a.json"), "backup", old)
+	writeAt(t, filepath.Join(target, "f", "evil.exe"), "code", old)
+	none := func(string) (time.Time, bool) { return time.Time{}, false }
+	m := restoreMatcher(store.Settings{}, syncthing.Folder{ID: "f", Path: dir})
+	steps := planRestore(dir, backup.Copies(target, "f"), m.Ignored, none)
+	if len(steps) != 1 || steps[0].To != "a.json" {
+		t.Errorf("steps = %+v, want a.json only", steps)
 	}
 }

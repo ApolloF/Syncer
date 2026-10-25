@@ -203,9 +203,12 @@ export function installMock() {
     app.GameView.createFrom({ name: 'The Witcher 3: Wild Hunt (Vortex mods)', path: `${vortex}\\witcher3\\mods`, known: true, size: 640 * MB, files: 1210, modified: iso(4300), kind: 'mods', manager: 'vortex', modGame: 'witcher3', modKey: 'vortex:witcher3/staging', syncedBy: '', installed: true, dismissed: false } satisfies Plain<app.GameView>),
     app.GameView.createFrom({ name: 'The Witcher 3: Wild Hunt (Vortex load order)', path: `${vortex}\\witcher3\\profiles`, known: true, size: 96 * KB, files: 5, modified: iso(4300), kind: 'mods-profiles', manager: 'vortex', modGame: 'witcher3', modKey: 'vortex:witcher3/profiles', syncedBy: '', installed: true, dismissed: false } satisfies Plain<app.GameView>),
   ]
-  // Synced by the laptop; mod folders are added by hand here.
+  // Synced by the laptop; mod folders are added by hand here, and so are
+  // folders that aren't known save folders or are over the size limit.
   const available: app.AvailableView[] = [
-    app.AvailableView.createFrom({ id: 'baldur-s-gate-3-vortex-mods', label: "Baldur's Gate 3 (Vortex mods)", path: `${vortex}\\baldursgate3\\mods`, from: 'Laptop', reason: 'mods-manual', kind: 'mods', modGame: 'baldursgate3' } satisfies Plain<app.AvailableView>),
+    app.AvailableView.createFrom({ id: 'baldur-s-gate-3-vortex-mods', label: "Baldur's Gate 3 (Vortex mods)", path: `${vortex}\\baldursgate3\\mods`, from: 'Laptop', reason: 'mods-manual', kind: 'mods', modGame: 'baldursgate3', sizeGB: 3, unknownPlace: false } satisfies Plain<app.AvailableView>),
+    app.AvailableView.createFrom({ id: 'tabletop-notes', label: 'Tabletop notes', path: `${home}\\Documents\\Tabletop notes`, from: 'Laptop', reason: 'ask', kind: '', modGame: '', sizeGB: 1, unknownPlace: true } satisfies Plain<app.AvailableView>),
+    app.AvailableView.createFrom({ id: 'cities-skylines-ii', label: 'Cities: Skylines II', path: `${home}\\AppData\\LocalLow\\Colossal Order\\Cities Skylines II`, from: 'Laptop', reason: 'ask', kind: '', modGame: '', sizeGB: 4, unknownPlace: false } satisfies Plain<app.AvailableView>),
   ]
 
   // Vortex's mod lists, shared between the PCs that sync a game's Vortex mods.
@@ -252,6 +255,7 @@ export function installMock() {
     notices: [],
     target: pub ? 'D:\\GameSaveBackup' : `${home}\\AppData\\Local\\Syncer\\GameSaveBackup`, lastBackup, lastSuccess: lastBackup.finished, backingUp, gaming: false, paused: false,
     settings, version: 'v1.0.0', versionGaps: [],
+    waiting: available.filter(a => a.reason === 'ask').map(a => ({ id: a.id, label: a.label, from: a.from })),
   } satisfies Plain<app.Overview>)
 
   const devices = app.DevicesView.createFrom({

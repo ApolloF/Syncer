@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { app } from '../../wailsjs/go/models'
-import { backupLine, isTime, plural, sameName, stateOf } from './folders'
+import type { app, store } from '../../wailsjs/go/models'
+import { backupLine, isTime, plural, sameName, stateOf, waitingText, waitReason } from './folders'
 
 const folder = (f: Partial<app.FolderView>) => ({ exists: true, state: 'idle', ...f }) as app.FolderView
 
@@ -65,5 +65,35 @@ describe('stateOf', () => {
   it('passes unknown states through', () => {
     expect(stateOf(folder({ state: 'cleaning' })).text).toBe('cleaning')
     expect(stateOf(folder({ state: '' })).text).toBe('…')
+  })
+})
+
+describe('waitingText', () => {
+  const w = (from: string, id = from) => ({ id, label: id, from }) as store.WaitingFolder
+  it('says nothing when no folder waits', () => {
+    expect(waitingText([])).toBe('')
+    expect(waitingText(null)).toBe('')
+  })
+  it('counts the folders and names the PC', () => {
+    expect(waitingText([w('SYNCER-B', 'a'), w('SYNCER-B', 'b')])).toBe('2 folders from SYNCER-B wait for your OK')
+    expect(waitingText([w('SYNCER-B')])).toBe('1 folder from SYNCER-B waits for your OK')
+  })
+  it('names no PC when several or an unnamed one sent them', () => {
+    expect(waitingText([w('SYNCER-B'), w('SYNCER-C')])).toBe('2 folders from your other PCs wait for your OK')
+    expect(waitingText([w('')])).toBe('1 folder from your other PCs waits for your OK')
+  })
+})
+
+describe('waitReason', () => {
+  const a = (sizeGB: number, unknownPlace = false) => ({ id: 'x', reason: 'ask', sizeGB, unknownPlace }) as app.AvailableView
+  it('says a folder is not a known save location', () => {
+    expect(waitReason(a(0, true), 1)).toBe('Not a known save location on this PC.')
+    expect(waitReason(a(2, true), -1)).toBe('Not a known save location on this PC.')
+  })
+  it('says so first when the folder is also too big', () => {
+    expect(waitReason(a(2, true), 1)).toBe('Not a known save location on this PC.')
+  })
+  it('says a folder is over the size limit', () => {
+    expect(waitReason(a(2), 1)).toBe('Bigger than 1 GB, the largest save Syncer adds automatically.')
   })
 })

@@ -46,7 +46,7 @@ func protectExisting(ctx context.Context, id, label, path string) error {
 	// copy everything again on the retry, unless saves changed since.
 	exclude := store.LoadSettings().Exclude[dismissKey(path)]
 	if t, ok := store.LoadState().Protected[key]; ok && time.Since(t) < 24*time.Hour &&
-		!backup.Newest(path, exclude).After(t) {
+		!(backup.Folder{ID: id, Path: path, Exclude: exclude}).Newest().After(t) {
 		return nil
 	}
 	target, ok := backupTarget(store.LoadSettings())

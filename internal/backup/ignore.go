@@ -26,6 +26,16 @@ type rule struct {
 var builtin = []string{".stfolder", ".stversions", ".stignore", "~syncthing~*", ".syncthing.*.tmp", "*.syncer-tmp", "desktop.ini", "Thumbs.db",
 	SteamMarker}
 
+// ProgramTypes are the programs and scripts that never belong in a save
+// folder, and files Explorer acts on just by showing them (.library-ms,
+// .searchConnector-ms): a folder another PC sends could carry one. Data
+// types some games keep (.js, .reg) aren't among them. Mod folders are full
+// of programs, so they keep theirs.
+var ProgramTypes = []string{"*.exe", "*.dll", "*.scr", "*.com", "*.msi", "*.bat", "*.cmd", "*.ps1", "*.psm1",
+	"*.vbs", "*.vbe", "*.wsf", "*.wsh", "*.lnk", "*.hta", "*.cpl", "*.pif", "*.jse", "*.url", "*.appref-ms", "*.scf",
+	"*.wsc", "*.psd1",
+	"*.library-ms", "*.searchConnector-ms", "*.jar", "*.msc", "*.msp", "*.application", "*.settingcontent-ms"}
+
 // SteamMarker is the file Steam Cloud writes into the save folders it keeps.
 const SteamMarker = "steam_autocloud.vdf"
 
@@ -40,7 +50,23 @@ const (
 // game's exclusions). Syncer's own block in .stignore is skipped: extra is
 // the current list, the block may be left over from when it was synced.
 func LoadMatcher(dir string, extra ...string) *Matcher {
-	pats := append([]string(nil), builtin...)
+	return loadMatcher(dir, nil, extra)
+}
+
+// Matcher is the Matcher for backing up (or restoring) f: a save folder's
+// programs are skipped ahead of its .stignore, so no line there brings them
+// back.
+func (f Folder) Matcher() *Matcher {
+	var types []string
+	if !f.Mod {
+		types = ProgramTypes
+	}
+	return loadMatcher(f.Path, types, f.Exclude)
+}
+
+// loadMatcher is LoadMatcher with patterns that go first, with the built-in ones.
+func loadMatcher(dir string, first, extra []string) *Matcher {
+	pats := append(append([]string(nil), builtin...), first...)
 	if f, err := os.Open(filepath.Join(dir, ".stignore")); err == nil {
 		sc := bufio.NewScanner(f)
 		managed := false

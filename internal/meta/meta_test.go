@@ -37,8 +37,16 @@ func TestAdoptable(t *testing.T) {
 		}
 		return discover.Class{}
 	}
-	defer func() { inOneDrive, classify = old, oldClassify }()
+	oldKnown := knownLocation
+	knownLocation = func(label, _ string) bool { return label != "unknown" }
+	defer func() { inOneDrive, classify, knownLocation = old, oldClassify, oldKnown }()
 	copied := with("bg3-rune", paths.Public, "Documents/Steam/RUNE/1086940")
+	big := game
+	big.SizeGB = 2
+	limit := s
+	limit.AutoAddMaxGB = 1
+	noLimit := s
+	noLimit.AutoAddMaxGB = -1
 	copied.CopyOf = "Baldur's Gate 3"
 
 	cases := []struct {
@@ -71,6 +79,11 @@ func TestAdoptable(t *testing.T) {
 		{"not installed beats Steam Cloud", with("steam", paths.Roaming, "Steam/Saves"), only, no, SkipNotInstalled},
 		{"emulator copy, found here", with("copy", paths.Roaming, "Copy"), s, yes, SkipCopy},
 		{"emulator copy, says the other PC", copied, s, yes, SkipCopy},
+		{"not a save folder the game database knows", with("unknown", paths.Roaming, "Unknown"), s, yes, SkipAsk},
+		{"unsafe beats asking", with("unknown", paths.Roaming, "../../.ssh"), s, yes, SkipUnsafe},
+		{"over the auto-add limit", big, limit, yes, SkipAsk},
+		{"no auto-add limit", big, noLimit, yes, ""},
+		{"within the auto-add limit", game, limit, yes, ""},
 	}
 	for _, c := range cases {
 		if _, got := Adoptable(c.sf, c.s, c.installed, synced); got != c.want {

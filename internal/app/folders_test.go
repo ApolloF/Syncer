@@ -137,7 +137,7 @@ func TestCleanMarkersStignore(t *testing.T) {
 	}
 	writeExclusions("x", dir)
 	cleanMarkers(dir)
-	if b, err := os.ReadFile(ig); err != nil || !strings.HasPrefix(string(b), "// mine\nTrainers/\n") {
+	if b, err := os.ReadFile(ig); err != nil || !strings.HasSuffix(string(b), "\n// mine\nTrainers/\n") {
 		t.Errorf("user's .stignore changed: %q %v", b, err)
 	}
 }

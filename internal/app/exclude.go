@@ -39,9 +39,13 @@ const maxExclusions = 100
 var syncIgnores = []string{backup.SteamMarker, "vortex.deployment*", "__vortex_staging_folder", "__folder_managed_by_vortex"}
 
 // withSyncIgnores returns the lines of Syncer's .stignore block for a game
-// (or a mod folder of kind) with the exclusions pats.
+// (or a mod folder of kind) with the exclusions pats. Programs and scripts
+// are never synced in a save folder (see backup.ProgramTypes).
 func withSyncIgnores(kind string, pats []string) []string {
 	out := append([]string(nil), syncIgnores...)
+	if kind == "" {
+		out = append(out, backup.ProgramTypes...)
+	}
 	out = append(out, mods.Ignores(kind)...)
 	for _, p := range pats {
 		if hasDeletePrefix(p) {
@@ -101,6 +105,10 @@ func stripDeletePrefix(p string) string {
 	}
 }
 
+// programsAllowed reports whether the folder id syncs and backs up programs
+// and scripts (see backup.ProgramTypes): a mod folder's are its mods.
+func programsAllowed(s store.Settings, id string) bool { return modKind(s, id) != "" }
+
 // folderIgnores are all of Syncer's .stignore lines for the folder id at
 // path. A deployed-mods folder ends with the lines that limit it to the mod
 // files, after the user's exclusions (Syncthing uses the first line that
@@ -152,7 +160,10 @@ func cleanExclusions(in []string) ([]string, error) {
 }
 
 // mergeIgnores replaces Syncer's block in a .stignore's lines with patterns
-// (none = no block) and keeps every other line.
+// (none = no block) and keeps every other line. The block goes first:
+// Syncthing uses the first line that matches, so no line of the user's, or
+// of a file it includes (which may come from another PC), can bring back
+// what Syncer keeps out. A block an older Syncer wrote at the end moves up.
 func mergeIgnores(current, patterns []string) []string {
 	var out []string
 	managed := false
@@ -174,12 +185,14 @@ func mergeIgnores(current, patterns []string) []string {
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
 		out = out[:len(out)-1]
 	}
-	if len(patterns) > 0 {
-		out = append(out, backup.IgnoreBegin)
-		out = append(out, patterns...)
-		out = append(out, backup.IgnoreEnd)
+	for len(out) > 0 && strings.TrimSpace(out[0]) == "" {
+		out = out[1:]
 	}
-	return out
+	if len(patterns) == 0 {
+		return out
+	}
+	block := append(append([]string{backup.IgnoreBegin}, patterns...), backup.IgnoreEnd)
+	return append(block, out...)
 }
 
 // writeExclusions puts Syncer's lines (the game's exclusions and

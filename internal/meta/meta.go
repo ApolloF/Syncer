@@ -178,8 +178,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature},
 		Version: AppVersion, Rejected: rejectedHere(),
 		Folders: publishable(folders, settings, ast, me, func(id string) int64 {
-			st, _ := c.FolderStatus(ctx, id)
-			return st.GlobalBytes
+			return folderSize(ctx, c, id)
 		})}
 	rememberModSizes(settings, mine.Folders)
 	if features.Mods { // a build without mods publishes none: PCs read a missing entry as "not shared"
@@ -250,6 +249,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		}
 		byID[sf.ID] = syncthing.Folder{ID: sf.ID, Label: sf.Label, Path: p, Devices: toFD(devList(me, others)),
 			Versioning: syncthing.Versioning{Type: "staggered"}, MaxConflicts: -1}
+		all = append(all, byID[sf.ID])
 		allIDs[sf.ID] = true
 		synced = append(synced, p)
 		rep.Added = append(rep.Added, sf.Label)
@@ -263,6 +263,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		}
 		byID[add.id] = syncthing.Folder{ID: add.id, Label: add.label, Path: add.path, Devices: toFD(devList(me, others)),
 			Versioning: syncthing.Versioning{Type: "staggered"}}
+		all = append(all, byID[add.id])
 		allIDs[add.id] = true
 		synced = append(synced, add.path)
 		rep.Added = append(rep.Added, add.label)
@@ -270,6 +271,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	}
 
 	quietOffers(ctx, c, pcs, skipped, allIDs)
+	noteWaiting(available(me, all, settings, installed))
 
 	// Every folder is shared with every paired PC, has versioning on and
 	// keeps every conflict copy, except a PC receiving deployed mods: it
@@ -316,7 +318,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 // are published by their portable path (an account's saves of a split game
 // at the game's save folder); mod folders by their mod root,
 // which each PC resolves with its own mod manager. size returns a folder's
-// size in bytes (asked for mod folders only).
+// size in bytes.
 func publishable(folders []syncthing.Folder, s store.Settings, ast accounts.State, me string, size func(id string) int64) []SharedFolder {
 	var out []SharedFolder
 	for _, f := range folders {
@@ -342,7 +344,7 @@ func publishable(folders []syncthing.Folder, s store.Settings, ast accounts.Stat
 			}
 			sf := SharedFolder{ID: f.ID, Label: f.Label, Root: mf.Root, Rel: mf.Rel, Kind: mf.Kind, ModGame: mf.Game}
 			if b := size(f.ID); b > 0 {
-				sf.SizeGB = int((b + 1<<30 - 1) >> 30)
+				sf.SizeGB = sizeGB(b)
 			} else {
 				sf.SizeGB = s.Mods[f.ID].SizeGB // paused (Vortex open): keep the last size known
 			}
@@ -358,11 +360,52 @@ func publishable(folders []syncthing.Folder, s store.Settings, ast accounts.Stat
 				continue
 			}
 			out = append(out, SharedFolder{ID: f.ID, Label: f.Label, Root: root, Rel: rel,
-				CopyOf: classify(f.Label, f.Path).CopyOf})
+				CopyOf: classify(f.Label, f.Path).CopyOf, SizeGB: sizeGB(size(f.ID))})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+var sizes struct {
+	sync.Mutex
+	m map[string]sizeAt
+}
+
+type sizeAt struct {
+	b  int64
+	at time.Time
+}
+
+// folderSize is a folder's size in bytes as Syncthing knows it (0 if it
+// can't tell), asked again every few minutes only: Syncthing's folder status
+// is costly, and reconcile runs every minute for every folder.
+func folderSize(ctx context.Context, c *syncthing.Client, id string) int64 {
+	sizes.Lock()
+	v, ok := sizes.m[id]
+	sizes.Unlock()
+	if ok && time.Since(v.at) < 10*time.Minute {
+		return v.b
+	}
+	st, err := c.FolderStatus(ctx, id)
+	if err != nil || st.GlobalBytes <= 0 {
+		return 0
+	}
+	sizes.Lock()
+	if sizes.m == nil {
+		sizes.m = map[string]sizeAt{}
+	}
+	sizes.m[id] = sizeAt{st.GlobalBytes, time.Now()}
+	sizes.Unlock()
+	return st.GlobalBytes
+}
+
+// sizeGB is a size in bytes in whole GB, rounded up.
+func sizeGB(b int64) int {
+	if b <= 0 {
+		return 0
+	}
+	return int((b + 1<<30 - 1) >> 30)
 }
 
 // knownLaunchers are the launchers whose own data Syncer syncs, by the
@@ -381,6 +424,9 @@ func KnownLauncher(name string) (string, bool) {
 // data, so this PC doesn't take them for a game's saves before its own
 // launcher asks.
 func markLaunchers(cands []SharedFolder, synced map[string]syncthing.Folder) {
+	if !features.Launchers {
+		return
+	}
 	s := store.LoadSettings()
 	add := map[string]string{}
 	for _, sf := range cands {
@@ -504,6 +550,9 @@ const (
 	SkipNoRoot       = "not-here"      // the folder it's in doesn't exist on this PC (no Ubisoft Connect)
 	SkipLink         = "link"          // this PC reaches the folder through a junction or symbolic link
 	SkipLaunchersOff = "launchers-off" // a launcher's own data, and this build has no launcher support
+	// SkipAsk: not one of the game's save folders in the game database, or
+	// bigger than the auto-add limit; it waits for the user's OK.
+	SkipAsk = "ask"
 
 	// Mod folders.
 	SkipModsOff             = "mods-off"              // "Find installed mods" is off here
@@ -522,8 +571,11 @@ const (
 var (
 	inOneDrive = paths.InOneDrive
 	classify   = discover.Classify
-	resolveMod = mods.Resolve
-	checkMod   = mods.CheckModSyncable
+	// knownLocation reports whether a folder is one of the save folders
+	// the game database lists for the game it's named after.
+	knownLocation = discover.KnownLocation
+	resolveMod    = mods.Resolve
+	checkMod      = mods.CheckModSyncable
 	// deploysHere reports whether this PC's own mod manager deploys into
 	// the deployed-mods folder at path.
 	deploysHere = mods.DeploysHere
@@ -577,6 +629,12 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 		return p, SkipSteamCloud
 	case c.CopyOf != "":
 		return p, SkipCopy
+	}
+	// The other PC names the folder and its place: a list of folders that
+	// must never be synced can't be complete, so only the saves the game
+	// database knows for that game are added without asking.
+	if !knownLocation(sf.Label, p) || s.AutoAddMaxGB > 0 && sf.SizeGB > s.AutoAddMaxGB {
+		return p, SkipAsk
 	}
 	return p, ""
 }
@@ -743,6 +801,9 @@ type Avail struct {
 	Path   string
 	From   string
 	Reason string
+	// UnknownPlace: it waits (SkipAsk) because it isn't one of the game's
+	// save folders in the game database, not (only) because of its size.
+	UnknownPlace bool
 }
 
 // Available lists folders published by other PCs that this PC neither syncs
@@ -756,15 +817,18 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 	if err != nil {
 		return nil, err
 	}
+	return available(st.MyID, folders, store.LoadSettings(), lazyInstalled()), nil
+}
+
+// available is Available for the Syncthing folders this PC (me) has.
+func available(me string, folders []syncthing.Folder, s store.Settings, installed func(string) bool) []Avail {
 	have := map[string]bool{}
 	for _, f := range folders {
 		have[f.ID] = true
 	}
-	s := store.LoadSettings()
-	installed := lazyInstalled()
 	synced := syncedPaths(folders)
 	var out []Avail
-	for _, df := range readOtherFiles(st.MyID) {
+	for _, df := range readOtherFiles(me) {
 		for _, sf := range df.Folders {
 			if have[sf.ID] || sf.Launcher != "" && !features.Launchers ||
 				(sf.Kind != "" || mods.IsModRoot(sf.Root)) && !features.Mods {
@@ -793,7 +857,8 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 					reason = Pending
 				}
 				have[sf.ID] = true
-				out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason})
+				out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason,
+					UnknownPlace: reason == SkipAsk && !knownLocation(sf.Label, p)})
 				continue
 			}
 			p, reason := Adoptable(sf, s, installed, synced)
@@ -804,12 +869,45 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 				reason = Pending
 			}
 			have[sf.ID] = true
-			out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason})
+			out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason,
+				UnknownPlace: reason == SkipAsk && !knownLocation(sf.Label, p)})
 		}
 	}
 	out = dropOuter(out)
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
-	return out, nil
+	return out
+}
+
+// DoneWaiting drops the folder id from the ones waiting for the user's OK,
+// once the user started syncing it (a reconcile may not run right away).
+func DoneWaiting(id string) {
+	w := store.LoadState().Waiting
+	if !slices.ContainsFunc(w, func(f store.WaitingFolder) bool { return f.ID == id }) {
+		return
+	}
+	if err := store.UpdateState(func(st *store.State) {
+		st.Waiting = slices.DeleteFunc(st.Waiting, func(f store.WaitingFolder) bool { return f.ID == id })
+	}); err != nil {
+		logx.Printf("meta: note waiting folders: %v", err)
+	}
+}
+
+// noteWaiting records the folders from other PCs that wait for the user's
+// OK, for the count in the app. A launcher's own data isn't one: the
+// launcher asks for it itself.
+func noteWaiting(av []Avail) {
+	var w []store.WaitingFolder
+	for _, a := range av {
+		if a.Reason == SkipAsk && a.Launcher == "" {
+			w = append(w, store.WaitingFolder{ID: a.ID, Label: a.Label, From: a.From})
+		}
+	}
+	if slices.Equal(w, store.LoadState().Waiting) {
+		return
+	}
+	if err := store.UpdateState(func(st *store.State) { st.Waiting = w }); err != nil {
+		logx.Printf("meta: note waiting folders: %v", err)
+	}
 }
 
 // dropOuter keeps one folder of each nested group: a folder that holds

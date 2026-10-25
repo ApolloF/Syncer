@@ -17,7 +17,9 @@ import (
 // Restore copies a folder's backup back to its local path as it was at point
 // (zero time = latest backup). Current local files that get overwritten are
 // first saved as a new, pinned restore point, so a restore can always be
-// undone. Files that already hold what they'd be restored to are left alone.
+// undone. Files that already hold what they'd be restored to are left alone,
+// and so are those the backup skips: an older point may hold a program
+// another PC put into a save folder before Syncer kept them out.
 func Restore(target string, f Folder, point time.Time) (int, error) {
 	if !paths.ValidID(f.ID) {
 		return 0, fmt.Errorf("unsupported folder id %q", f.ID)
@@ -44,9 +46,13 @@ func Restore(target string, f Folder, point time.Time) (int, error) {
 			org.save(target, now.Format(stampFmt))
 		}
 	}()
+	m := f.Matcher()
 	n := 0
 	for k, from := range src {
 		rel := rels[k]
+		if m.Ignored(rel) {
+			continue
+		}
 		to := filepath.Join(f.Path, rel)
 		if fi, err := os.Stat(to); err == nil && !fi.IsDir() {
 			if same, err := fsx.SameContent(to, from); err == nil && same {

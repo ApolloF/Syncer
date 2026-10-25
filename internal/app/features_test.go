@@ -109,12 +109,16 @@ func TestCleanExclusions(t *testing.T) {
 func TestMergeIgnores(t *testing.T) {
 	user := []string{"// mine", "Trainers/", ""}
 	got := mergeIgnores(user, []string{"*.log"})
-	want := []string{"// mine", "Trainers/", backup.IgnoreBegin, "*.log", backup.IgnoreEnd}
+	want := []string{backup.IgnoreBegin, "*.log", backup.IgnoreEnd, "// mine", "Trainers/"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("add block: %q", got)
 	}
-	if again := mergeIgnores(got, []string{"*.dmp"}); !slices.Equal(again, []string{"// mine", "Trainers/", backup.IgnoreBegin, "*.dmp", backup.IgnoreEnd}) {
+	if again := mergeIgnores(got, []string{"*.dmp"}); !slices.Equal(again, []string{backup.IgnoreBegin, "*.dmp", backup.IgnoreEnd, "// mine", "Trainers/"}) {
 		t.Errorf("replace block: %q", again)
+	}
+	old := []string{"// mine", "Trainers/", "", backup.IgnoreBegin, "*.log", backup.IgnoreEnd}
+	if moved := mergeIgnores(old, []string{"*.log"}); !slices.Equal(moved, want) {
+		t.Errorf("an older Syncer's block at the end isn't moved up: %q", moved)
 	}
 	if none := mergeIgnores(got, nil); !slices.Equal(none, []string{"// mine", "Trainers/"}) {
 		t.Errorf("remove block: %q", none)
@@ -169,7 +173,8 @@ func TestWantAutoSkipsEmulatorCopies(t *testing.T) {
 }
 
 func TestWithSyncIgnores(t *testing.T) {
-	base := []string{"steam_autocloud.vdf", "vortex.deployment*", "__vortex_staging_folder", "__folder_managed_by_vortex"}
+	base := append([]string{"steam_autocloud.vdf", "vortex.deployment*", "__vortex_staging_folder", "__folder_managed_by_vortex"},
+		backup.ProgramTypes...)
 	if got := withSyncIgnores("", nil); !slices.Equal(got, base) {
 		t.Errorf("no exclusions: %v", got)
 	}
