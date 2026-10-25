@@ -138,7 +138,8 @@ func (a *App) gameRunning() bool {
 // holdSync pauses every running game folder in Syncthing (on), or resumes
 // the ones it paused. Folders paused by hand, or by a pause the user set,
 // are left alone; a folder whose game exits during such a pause stays paused
-// until that ends.
+// until that ends. So are the folders an account operation works on: it
+// owns their pause (see accounts.Journal.pause).
 func holdSync(ctx context.Context, on bool) {
 	c, err := syncthing.New()
 	if err != nil {
@@ -153,49 +154,7 @@ func holdSync(ctx context.Context, on bool) {
 
 func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 	if !on {
-		held := store.LoadState().GamePaused
-		if len(held) == 0 {
-			return nil
-		}
-		if store.LoadSettings().Paused() {
-			// A pause started meanwhile: it resumes them when it ends.
-			store.UpdateState(func(st *store.State) {
-				for _, id := range st.GamePaused {
-					if !slices.Contains(st.PausedFolders, id) {
-						st.PausedFolders = append(st.PausedFolders, id)
-					}
-				}
-				st.GamePaused = nil
-			})
-			return nil
-		}
-		var errs []error
-		var left, modHeld []string
-		s := store.LoadSettings()
-		for _, id := range held {
-			// A mod folder waits while its mod manager is open (see
-			// modsTick), and a PC receiving deployed mods keeps its folder
-			// paused.
-			if isMod(s, id) && (!features.Mods || !holdable(s, id) || mods.ManagerRunning(processPaths())) {
-				if holdable(s, id) {
-					modHeld = append(modHeld, id)
-				}
-				continue
-			}
-			if err := c.PatchFolder(ctx, id, map[string]any{"paused": false}); err != nil && exists(ctx, c, id) {
-				errs = append(errs, err)
-				left = append(left, id)
-			}
-		}
-		store.UpdateState(func(st *store.State) {
-			st.GamePaused = left
-			for _, id := range modHeld {
-				if !slices.Contains(st.ModHeld, id) {
-					st.ModHeld = append(st.ModHeld, id)
-				}
-			}
-		})
-		return errors.Join(errs...)
+		return releaseGameHold(ctx, c)
 	}
 	fs, err := c.Folders(ctx)
 	if err != nil {
@@ -207,39 +166,121 @@ func holdSyncWith(ctx context.Context, c *syncthing.Client, on bool) error {
 	for _, id := range store.LoadState().PausedFolders {
 		userPaused[id] = true
 	}
-	var now, toPause []string
-	var errs []error
+	var now []string
+	paused := map[string]bool{}
 	for _, f := range fs {
 		if f.ID == meta.FolderID || (f.Paused && !userPaused[f.ID]) {
 			continue // paused by hand: not Syncer's to resume
 		}
 		now = append(now, f.ID)
-		if !f.Paused {
-			toPause = append(toPause, f.ID)
-		}
+		paused[f.ID] = f.Paused
 	}
 	// Remembered before pausing, so a crash in between can't leave a folder
-	// paused that nothing will ever resume.
+	// paused that nothing will ever resume. The operation's folders are
+	// checked under the state lock: an operation that starts meanwhile sees
+	// either this record (and takes the folder over) or none.
+	var toPause []string
 	if err := store.UpdateState(func(st *store.State) {
+		busy := opFolder()
+		toPause = nil
 		for _, id := range now {
+			if busy(id) {
+				continue
+			}
 			if !slices.Contains(st.GamePaused, id) {
 				st.GamePaused = append(st.GamePaused, id)
+			}
+			if !paused[id] {
+				toPause = append(toPause, id)
 			}
 		}
 		st.GameHeld = time.Now()
 	}); err != nil {
 		return fmt.Errorf("not pausing folders that couldn't be remembered: %w", err)
 	}
+	var errs []error
 	var failed []string
 	for _, id := range toPause {
-		if err := c.PatchFolder(ctx, id, map[string]any{"paused": true}); err != nil {
+		// Paused under the state lock, and only while still the hold's: an
+		// operation may have taken it over (and be done with it) meanwhile.
+		var perr error
+		if err := store.UpdateState(func(st *store.State) {
+			if !slices.Contains(st.GamePaused, id) || opFolder()(id) {
+				return
+			}
+			cctx, cancel := context.WithTimeout(ctx, lockedCall)
+			defer cancel()
+			perr = c.PatchFolder(cctx, id, map[string]any{"paused": true})
+		}); err != nil {
 			errs = append(errs, err)
+			continue
+		}
+		if perr != nil {
+			errs = append(errs, perr)
 			failed = append(failed, id)
 		}
 	}
 	if gone := notPaused(ctx, c, failed); len(gone) > 0 {
 		store.UpdateState(func(st *store.State) {
 			st.GamePaused = slices.DeleteFunc(st.GamePaused, func(id string) bool { return slices.Contains(gone, id) })
+		})
+	}
+	return errors.Join(errs...)
+}
+
+// releaseGameHold resumes the folders the game hold paused (see
+// resumeLocked). An operation's folders stay listed until it takes them
+// over.
+func releaseGameHold(ctx context.Context, c *syncthing.Client) error {
+	held := store.LoadState().GamePaused
+	if len(held) == 0 {
+		return nil
+	}
+	if store.LoadSettings().Paused() {
+		// A pause started meanwhile: it resumes them when it ends.
+		return store.UpdateState(func(st *store.State) {
+			busy := opFolder()
+			var keep []string
+			for _, id := range st.GamePaused {
+				if busy(id) {
+					keep = append(keep, id)
+				} else if !slices.Contains(st.PausedFolders, id) {
+					st.PausedFolders = append(st.PausedFolders, id)
+				}
+			}
+			st.GamePaused = keep
+		})
+	}
+	var errs []error
+	var modHeld, dropped []string
+	s := store.LoadSettings()
+	for _, id := range held {
+		// A mod folder waits while its mod manager is open (see
+		// modsTick), and a PC receiving deployed mods keeps its folder
+		// paused.
+		if isMod(s, id) && (!features.Mods || !holdable(s, id) || mods.ManagerRunning(processPaths())) {
+			if holdable(s, id) {
+				modHeld = append(modHeld, id)
+			}
+			dropped = append(dropped, id)
+			continue
+		}
+		if err := resumeLocked(ctx, c, id, func(st *store.State) *[]string { return &st.GamePaused }); err != nil {
+			if exists(ctx, c, id) {
+				errs = append(errs, err)
+			} else {
+				dropped = append(dropped, id)
+			}
+		}
+	}
+	if len(dropped) > 0 {
+		store.UpdateState(func(st *store.State) {
+			st.GamePaused = slices.DeleteFunc(st.GamePaused, func(id string) bool { return slices.Contains(dropped, id) })
+			for _, id := range modHeld {
+				if !slices.Contains(st.ModHeld, id) {
+					st.ModHeld = append(st.ModHeld, id)
+				}
+			}
 		})
 	}
 	return errors.Join(errs...)
