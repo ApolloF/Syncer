@@ -129,7 +129,7 @@ func TestKnownLocation(t *testing.T) {
 // A manifest path without an extension may name a file: when it is one on
 // this PC, the folder it's in is the game's save folder.
 func TestKnownLocationOfAFileWithoutExtension(t *testing.T) {
-	roaming := filepath.Join(t.TempDir(), "roaming")
+	roaming := filepath.Join(longTempDir(t), "roaming")
 	t.Cleanup(paths.SetRootForTest(paths.Roaming, roaming))
 	t.Cleanup(paths.SetRootForTest(paths.Ubisoft, ""))
 	t.Cleanup(SetManifestForTest([]Entry{{Name: "Plain Game", Paths: []string{"<winAppData>/Plain/savefile", "<winAppData>/Other/data/saves"}}}))
@@ -143,4 +143,15 @@ func TestKnownLocationOfAFileWithoutExtension(t *testing.T) {
 	if KnownLocation("Plain Game", filepath.Join(roaming, "Other", "data")) {
 		t.Error("the folder around a save folder counts as known")
 	}
+}
+
+// longTempDir is t.TempDir() with its long names: the temp folder can be
+// under a short-named profile (RUNNER~1 on CI), and known save
+// locations refuse short names.
+func longTempDir(t *testing.T) string {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
