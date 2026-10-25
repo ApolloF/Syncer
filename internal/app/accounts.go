@@ -491,7 +491,7 @@ func (a *App) ConflictOwners(id string) ([]ConflictOwner, error) {
 	}
 	o := a.ownerGuesser(st.MyID)
 	out := []ConflictOwner{}
-	for _, cf := range conflict.Find(f.Path) {
+	for _, cf := range a.findConflicts(f, c) {
 		co := ConflictOwner{Copy: cf.Copy, Other: o.at(cf.Device, cf.CopyModified)}
 		if fi, err := c.DBFile(ctx, id, filepath.ToSlash(cf.Rel)); err == nil && fi.ModifiedBy != "" {
 			co.Current = o.at(fi.ModifiedBy, fi.Modified)
