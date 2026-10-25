@@ -24,7 +24,7 @@
   import { ui, attempt, fail, refresh, toast, accountName, accountColor } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
   import { isTime, plural, backupLine, stateOf } from '../lib/folders'
-  import { conflictBadge, conflictPCs as pcsOf } from '../lib/conflicts'
+  import { conflictBadge, conflictPCs as pcsOf, currentLabel, otherLabel } from '../lib/conflicts'
   import { byModKind, modGameName, modPhase } from '../lib/mods'
   import { modsAvailable, modsPageOn } from '../lib/features'
   import {
@@ -1146,12 +1146,12 @@
           <div class="mono ellipsis" title={c.rel}>{c.rel}</div>
           <div class="versions">
             <div class="ver">
-              <div class="faint small">Current{c.missing ? ' (deleted)' : ''}{c.currentName && !c.missing ? ` · from ${c.currentName}` : ''}</div>
+              <div class="faint small">{currentLabel(c)}</div>
               <div>{c.missing ? '—' : `${when(Date.parse(c.modified) / 1000)} · ${bytes(c.size)}`}</div>
               <button class="btn sm" disabled={!!resolving} onclick={() => resolve(c, false)}>Keep current</button>
             </div>
             <div class="ver">
-              <div class="faint small">Other version{c.deviceName ? ` · from ${c.deviceName}` : ''}</div>
+              <div class="faint small">{otherLabel(c)}</div>
               <div>{when(Date.parse(c.copyModified) / 1000)} · {bytes(c.copySize)}</div>
               <button class="btn sm primary" disabled={!!resolving} onclick={() => resolve(c, true)}>
                 {#if resolving === c.copy}<Icon name="refresh" size={14} class="spin" />{/if} Use this one

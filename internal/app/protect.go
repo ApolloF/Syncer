@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -19,6 +20,7 @@ import (
 	"github.com/ApolloF/syncer/internal/meta"
 	"github.com/ApolloF/syncer/internal/paths"
 	"github.com/ApolloF/syncer/internal/store"
+	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
 func init() {
@@ -140,12 +142,16 @@ func (a *App) Conflicts(id string) ([]conflict.Conflict, error) {
 	if err != nil {
 		return nil, err
 	}
-	cs := conflict.Find(f.Path)
+	c, cerr := a.client()
+	if cerr != nil {
+		c = nil
+	}
+	cs := a.findConflicts(f, c)
 	names := a.deviceNames()
-	c, err := a.client()
-	if err != nil {
+	me := ""
+	if cerr != nil {
 		for i := range cs {
-			cs[i].DeviceName = names[cs[i].Device]
+			cs[i].DeviceName = copyName(cs[i], names, me)
 		}
 		return cs, nil
 	}
@@ -153,14 +159,14 @@ func (a *App) Conflicts(id string) ([]conflict.Conflict, error) {
 	defer cancel()
 	// Say which version is this PC's: "keep mine" is what people look for.
 	if st, err := c.Status(ctx); err == nil && len(st.MyID) >= 7 {
-		me := st.MyID[:7]
+		me = st.MyID[:7]
 		names[me] = cmp.Or(names[me], "this PC")
 		if names[me] != "this PC" {
 			names[me] += " (this PC)"
 		}
 	}
 	for i := range cs {
-		cs[i].DeviceName = names[cs[i].Device]
+		cs[i].DeviceName = copyName(cs[i], names, me)
 		if i < 50 { // one Syncthing call each
 			if fi, err := c.DBFile(ctx, id, filepath.ToSlash(cs[i].Rel)); err == nil && fi.ModifiedBy != "" {
 				cs[i].CurrentName = names[fi.ModifiedBy]
@@ -168,6 +174,36 @@ func (a *App) Conflicts(id string) ([]conflict.Conflict, error) {
 		}
 	}
 	return cs, nil
+}
+
+// copyName names the PC a conflict copy came from; "" when only the file
+// name's suffix is known, since that is the other side.
+func copyName(c conflict.Conflict, names map[string]string, me string) string {
+	if c.Guessed {
+		return ""
+	}
+	if me != "" && c.Device == me {
+		return "this PC"
+	}
+	return names[c.Device]
+}
+
+// findConflicts lists a folder's conflict copies, each attributed to the PC
+// it came from (see conflict.Attribute). Without Syncthing (c nil) the
+// attribution is a guess.
+func (a *App) findConflicts(f backup.Folder, c *syncthing.Client) []conflict.Conflict {
+	cs := conflict.Find(f.Path)
+	if c == nil {
+		conflict.Attribute(cs, func(string) (string, error) { return "", errors.New("no Syncthing") })
+		return cs
+	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	conflict.Attribute(cs, func(rel string) (string, error) {
+		fi, err := c.DBFile(ctx, f.ID, filepath.ToSlash(rel))
+		return fi.ModifiedBy, err
+	})
+	return cs
 }
 
 // deviceNames maps short (7 character) device ids to names.
@@ -214,13 +250,18 @@ func (a *App) ResolveConflicts(id, device string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	cs := conflict.Find(f.Path)
+	c, err := a.client()
+	if err != nil {
+		c = nil
+	}
+	cs := a.findConflicts(f, c)
 	if device != "" {
 		cs = conflict.FromDevice(cs, device)
 	}
 	n := 0
+	keep, where := keeper(f) // one for all files: a busy backup is waited for once
 	for _, c := range cs {
-		if err := a.resolveConflict(id, c.Copy, device != ""); err != nil {
+		if err := a.resolveConflictWith(id, c.Copy, device != "", keep, where); err != nil {
 			if n > 0 {
 				runtime.EventsEmit(a.ctx, "changed")
 			}
@@ -239,6 +280,15 @@ func (a *App) resolveConflict(id, copyRel string, useCopy bool) error {
 		return err
 	}
 	keep, where := keeper(f)
+	return a.resolveConflictWith(id, copyRel, useCopy, keep, where)
+}
+
+// resolveConflictWith is resolveConflict with the history put chosen by the caller.
+func (a *App) resolveConflictWith(id, copyRel string, useCopy bool, keep conflict.Preserve, where string) error {
+	f, err := folderByID(id)
+	if err != nil {
+		return err
+	}
 	curName, copyName := a.versionNames(id, copyRel)
 	aside := filepath.Join(f.Path, filepath.Clean(copyRel)) // the version put aside
 	if useCopy {
@@ -273,18 +323,27 @@ func conflictRel(copyRel string) string {
 // from ("" when unknown).
 func (a *App) versionNames(id, copyRel string) (current, copy string) {
 	names := a.deviceNames()
-	if _, dev, ok := conflict.Parse(filepath.Base(copyRel)); ok {
-		copy = names[dev]
-	}
 	if c, err := a.client(); err == nil {
 		ctx, cancel := a.callCtx()
 		defer cancel()
+		// The suffix names the winner, not the copy's PC: only the copy's own
+		// entry does. Without it the PC stays unnamed.
+		if fi, err := c.DBFile(ctx, id, filepath.ToSlash(filepath.Clean(copyRel))); err == nil {
+			copy = names[fi.ModifiedBy]
+		}
 		if fi, err := c.DBFile(ctx, id, filepath.ToSlash(conflictRel(copyRel))); err == nil {
 			current = names[fi.ModifiedBy]
 		}
 	}
 	return current, copy
 }
+
+// conflictKeepWait is how long keeper waits for a running backup; keepWithin
+// is backup.KeepWithin (a variable so tests can stand in for it).
+var (
+	conflictKeepWait = time.Minute
+	keepWithin       = backup.KeepWithin
+)
 
 // keeper puts files of f into history: its backup history, or the folder's
 // .stversions without a backup folder (or while a long backup runs).
@@ -293,16 +352,19 @@ func keeper(f backup.Folder) (conflict.Preserve, string) {
 	keep, where := local, filepath.Join(f.Path, ".stversions")
 	if t, ok := backupTarget(store.LoadSettings()); ok {
 		if err := os.MkdirAll(t, 0o755); err == nil {
+			// After one wait ran out, the rest go straight to .stversions: a
+			// long backup would otherwise cost a minute per file.
+			var busy atomic.Bool
 			keep = func(abs, rel string, move bool) (string, error) {
-				if backup.Running() {
-					// Don't make the user wait for it (per file, for "all").
-					logx.Printf("conflict in %s: backup busy, keeping the other version in .stversions", f.Label)
+				if busy.Load() {
 					return local(abs, rel, move)
 				}
-				put, err := backup.Keep(t, f.ID, abs, rel, move)
+				// A backup is thinning the same history: wait for it rather than
+				// leaving the other version in .stversions.
+				put, err := keepWithin(conflictKeepWait, t, f.ID, abs, rel, move)
 				if errors.Is(err, backup.ErrBusy) {
-					// A long backup is running: don't make the user wait.
-					logx.Printf("conflict in %s: backup busy, keeping the other version in .stversions", f.Label)
+					busy.Store(true)
+					logx.Printf("conflict in %s: backup still busy after waiting %s, keeping the other version in .stversions", f.Label, conflictKeepWait)
 					return local(abs, rel, move)
 				}
 				return put, err
