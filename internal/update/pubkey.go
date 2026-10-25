@@ -9,7 +9,7 @@ import (
 // with (printed by `go run ./tools/release-sign -keygen -out <file>`). While
 // it is not a valid key, no update verifies, so none is installed. CI checks
 // the signature it just made against this very line.
-const releasePublicKey = "UNSET: paste the public key from release-sign -keygen"
+const releasePublicKey = "FFmfut3fCN5x/yt9FOf4XePWu1K8UM/Z4pyCRLqben8="
 
 // embeddedKey is releasePublicKey decoded; nil when that isn't a valid key.
 var embeddedKey = decodeKey(releasePublicKey)
