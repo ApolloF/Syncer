@@ -165,6 +165,9 @@ func (j *Journal) failAt(err error) error {
 func Apply(ctx context.Context, env Env) (bool, error) {
 	unlock := lockOps()
 	defer unlock()
+	if err := sweepTrash(filepath.Join(localRoot(), VaultName)); err != nil {
+		logx.Printf("accounts: cleaning the .trash: %v", err)
+	}
 	changed := false
 	if j, ok := PendingOp(); ok {
 		if err := run(ctx, env, &j); err != nil {
