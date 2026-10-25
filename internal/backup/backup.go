@@ -46,6 +46,8 @@ type Folder struct {
 	// Solo: only this PC backs it up (backed up only, not synced), so every
 	// file in its backup is this PC's.
 	Solo bool `json:"-"`
+	// Mod: a mod folder, whose programs and scripts are backed up too.
+	Mod bool `json:"-"`
 	// Scoped limits the backup to the files in Only (paths relative to
 	// Path, forward slashes): a folder that holds much more than what
 	// Syncer looks after, like a game folder with deployed mods in it.
@@ -240,7 +242,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	lastPause := time.Now()
 	dst := filepath.Join(target, f.ID)
 	verRoot := filepath.Join(target, VersionsDir, f.ID, stamp)
-	m := LoadMatcher(f.Path, f.Exclude...)
+	m := f.Matcher()
 	sc := f.scope()
 	idx := loadIndex(f.ID)
 	newIdx := map[string]indexEntry{}
@@ -253,7 +255,8 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 	rejected := RejectedFor(f.ID)
 	errf := func(format string, a ...any) { errs = append(errs, f.Label+": "+fmt.Sprintf(format, a...)) }
 
-	_ = filepath.WalkDir(f.Path, func(path string, d fs.DirEntry, err error) error {
+	walkFailed := false // some folder or file couldn't be read: seen is incomplete
+	_ = walkTree(f.Path, func(path string, d fs.DirEntry, err error) error {
 		if opts.Pause != nil && time.Since(lastPause) >= pauseEvery {
 			opts.Pause(ctx)
 			lastPause = time.Now()
@@ -263,25 +266,36 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		}
 		rel, _ := filepath.Rel(f.Path, path)
 		if err != nil {
-			if rel != "." {
-				errf("%s: %v", rel, err)
-			}
+			walkFailed = true
+			errf("%s: %v", rel, err)
 			return nil
 		}
 		if rel == "." {
 			return nil
 		}
 		if m.Ignored(rel) || sc.skip(rel, d.IsDir()) {
-			if d.IsDir() {
+			// A negation can reach into an ignored folder.
+			if d.IsDir() && !(m.HasNegation() && !sc.on) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if d.IsDir() || !d.Type().IsRegular() {
+		if d.IsDir() {
+			return nil
+		}
+		if d.Type()&fs.ModeIrregular != 0 {
+			// Skipping it would retire the backup's copy of a file that is
+			// still there, just not downloaded.
+			walkFailed = true
+			errf("%s: online-only file; make the folder available offline (for OneDrive: Always keep on this device) and back up again", rel)
+			return nil
+		}
+		if !d.Type().IsRegular() {
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
+			walkFailed = true
 			errf("%s: %v", rel, err)
 			return nil
 		}
@@ -353,8 +367,9 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 
 	// Files gone locally: move their backup copy into versions. If the local
 	// folder is suddenly empty, assume something is wrong and keep everything.
-	// A cancelled walk hasn't seen every file, so it must not retire anything.
-	if len(seen) > 0 && ctx.Err() == nil {
+	// A cancelled or failed walk hasn't seen every file, so it must not retire
+	// anything.
+	if len(seen) > 0 && ctx.Err() == nil && !walkFailed {
 		type goner struct{ path, rel, origin string }
 		var gone []goner
 		total := 0 // files in the backup
@@ -408,6 +423,13 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		org.save(target, stamp)
 	}
 	if ctx.Err() == nil {
+		if walkFailed {
+			for k, e := range idx {
+				if _, ok := newIdx[k]; !ok {
+					newIdx[k] = e
+				}
+			}
+		}
 		saveIndex(f.ID, newIdx)
 		files = indexFiles(newIdx, names)
 	}
@@ -592,9 +614,36 @@ func Lock() (unlock func(), err error) { return lock() }
 
 // Forget drops Syncer's local bookkeeping for a folder (and this PC's info
 // file next to its backup) and, with deleteBackup, its backup copy, version
-// history and info files under target. The caller must hold Lock, so a
-// running backup can't recreate what was deleted.
-func Forget(target, id string, deleteBackup bool) error {
+// history and info files under target. If another PC still has an info file
+// for the folder, only this PC's info goes and that PC's name is returned: the
+// backup is shared and still theirs. The caller must hold Lock, so a running
+// backup can't recreate what was deleted.
+func Forget(target, id string, deleteBackup bool) (stillBackedUpBy string, err error) {
+	if deleteBackup && paths.ValidID(id) {
+		stillBackedUpBy = otherPC(target, id)
+	}
+	return stillBackedUpBy, forget(target, id, deleteBackup && stillBackedUpBy == "")
+}
+
+// ForgetEverywhere is Forget with deleteBackup for every PC's data, for
+// deleting a backup the user picked by name.
+func ForgetEverywhere(target, id string) error { return forget(target, id, true) }
+
+// otherPC names a PC other than this one that backs folder id up, or "".
+func otherPC(target, id string) string {
+	for _, in := range ReadInfos(target, id) {
+		if in.Mine() {
+			continue
+		}
+		if in.Host != "" {
+			return in.Host
+		}
+		return in.key
+	}
+	return ""
+}
+
+func forget(target, id string, deleteBackup bool) error {
 	if !paths.ValidID(id) {
 		return fmt.Errorf("unsupported folder id %q", id)
 	}
@@ -688,6 +737,13 @@ func copyHistory(ctx context.Context, target, from, to string, mirror bool) erro
 			// Through a temporary file: one cut off halfway would be
 			// skipped as already copied next time.
 			tmp := out + tmpSuffix
+			// A leftover tmp may be a link to src: never write through it.
+			_ = os.Remove(tmp)
+			if !isMeta(rel, strings.HasPrefix(d[0], VersionsDir)) && linkFile(p, tmp) == nil {
+				// Same file, same mtime. Files here are only ever replaced
+				// by rename or deleted, never written in place.
+				return os.Rename(tmp, out)
+			}
 			if err := copyFile(p, tmp); err != nil {
 				_ = os.Remove(tmp)
 				return err
@@ -703,6 +759,20 @@ func copyHistory(ctx context.Context, target, from, to string, mirror bool) erro
 		}
 	}
 	return nil
+}
+
+// linkFile hard-links src to dst; a test replaces it to force the copy
+// fallback. Google Drive streaming folders and other volumes refuse links.
+var linkFile = os.Link
+
+// isMeta reports whether rel (inside a version tree) is bookkeeping that
+// Syncer rewrites in place, so each id needs its own copy.
+func isMeta(rel string, version bool) bool {
+	if !version {
+		return false
+	}
+	first, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
+	return first == PinnedDir || first == AsideDir || first == OriginsDir
 }
 
 func strictlyInside(parent, child string) bool {

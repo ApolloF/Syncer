@@ -132,13 +132,23 @@ func Start(ctx context.Context) error {
 	if exe == "" {
 		return errors.New("syncthing.exe not found")
 	}
-	cmd := Hidden(exe, "--no-browser", "--no-restart")
-	cmd.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP
+	cmd := startCommand(exe)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	_ = cmd.Process.Release()
 	return WaitReady(ctx, 30*time.Second)
+}
+
+// startCommand is how Syncthing is started. Syncthing 1.x creates a "Sync"
+// folder in the profile on its first start unless told not to; 2.x never
+// does and refuses its --no-default-folder flag, so the setting goes in the
+// environment, which 2.x ignores.
+func startCommand(exe string) *exec.Cmd {
+	cmd := Hidden(exe, "--no-browser", "--no-restart")
+	cmd.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP
+	cmd.Env = append(os.Environ(), "STNODEFAULTFOLDER=1")
+	return cmd
 }
 
 // WaitReady polls until the API answers or timeout passes.

@@ -74,4 +74,7 @@ func TestModIgnores(t *testing.T) {
 	if slices.Contains(withSyncIgnores("", nil), "/"+mods.StagingMarker) {
 		t.Error("a save folder got the staging lines")
 	}
+	if slices.Contains(got, "*.dll") {
+		t.Error("a mod folder doesn't sync its programs")
+	}
 }

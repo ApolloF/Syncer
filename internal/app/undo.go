@@ -200,7 +200,7 @@ func undoAll(ctx context.Context, o UndoOptions) (UndoReport, error) {
 	// Last, since it can be slow on a cloud drive: everything above must not
 	// wait on it.
 	for _, cv := range converted {
-		keepHistory(ctx, s, cv[0], cv[1])
+		_ = keepHistory(ctx, s, cv[0], cv[1]) // logged there
 	}
 	if err := meta.ForgetCache(); err != nil {
 		note("Couldn't remove the folder cache: %v", err)
@@ -253,8 +253,11 @@ func forgetBackups(s store.Settings, synced []backup.Folder, del bool, note func
 		if !paths.ValidID(f.ID) {
 			continue
 		}
-		if err := backup.Forget(target, f.ID, del); err != nil {
+		other, err := backup.Forget(target, f.ID, del)
+		if err != nil {
 			note("Couldn't delete the backup of %s: %v", f.Label, err)
+		} else if other != "" {
+			note("%s still backs up %s here, so its backup stays.", other, f.Label)
 		}
 	}
 	if del {

@@ -84,7 +84,8 @@ func newerElsewhere(target string, f backup.Folder, exclude []string, now time.T
 	if best.Newest.IsZero() {
 		return newerSave{}, best, false
 	}
-	if local := backup.Newest(f.Path, exclude); !best.Newest.After(local.Add(newerSlack)) {
+	f.Exclude = exclude
+	if local := f.Newest(); !best.Newest.After(local.Add(newerSlack)) {
 		return newerSave{}, best, false
 	}
 	return newerSave{Host: cmpOr(best.Host, "another PC"), At: best.Newest}, best, true
@@ -106,7 +107,8 @@ func (a *App) recheckNewer() {
 	left := map[string]newerSave{}
 	for _, f := range fs {
 		n, ok := newer[f.ID]
-		if ok && n.At.After(backup.Newest(f.Path, s.Exclude[dismissKey(f.Path)]).Add(newerSlack)) {
+		f.Exclude, f.Mod = s.Exclude[dismissKey(f.Path)], programsAllowed(s, f.ID)
+		if ok && n.At.After(f.Newest().Add(newerSlack)) {
 			left[f.ID] = n
 		}
 	}

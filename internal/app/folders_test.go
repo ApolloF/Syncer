@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -134,7 +137,90 @@ func TestCleanMarkersStignore(t *testing.T) {
 	}
 	writeExclusions("x", dir)
 	cleanMarkers(dir)
-	if b, err := os.ReadFile(ig); err != nil || !strings.HasPrefix(string(b), "// mine\nTrainers/\n") {
+	if b, err := os.ReadFile(ig); err != nil || !strings.HasSuffix(string(b), "\n// mine\nTrainers/\n") {
 		t.Errorf("user's .stignore changed: %q %v", b, err)
+	}
+}
+
+func TestForgetBackupReportsOtherPC(t *testing.T) {
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, t.TempDir()))
+	target := t.TempDir()
+	if _, err := store.UpdateSettings(func(s *store.Settings) { s.BackupRoot = target }); err != nil {
+		t.Fatal(err)
+	}
+	id := "shared-game"
+	for p, c := range map[string]string{
+		filepath.Join(target, id, "a.sav"):                     "a",
+		filepath.Join(target, backup.InfoDir, id, "zz-b.json"): `{"id":"shared-game","label":"Shared","host":"SYNCER-B"}`,
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other, err := forgetBackup(id, true)
+	if err != nil || other != "SYNCER-B" {
+		t.Fatalf("forgetBackup = %q, %v", other, err)
+	}
+	if _, err := os.Stat(filepath.Join(target, id, "a.sav")); err != nil {
+		t.Error("backup deleted while another PC uses it")
+	}
+	if got := removeMessage(true, other); got != "SYNCER-B still backs it up here, so the backup stays" {
+		t.Errorf("message %q", got)
+	}
+	if removeMessage(true, "") != "Backup deleted" || removeMessage(false, "") != "" {
+		t.Error("removeMessage")
+	}
+
+	if err := os.Remove(filepath.Join(target, backup.InfoDir, id, "zz-b.json")); err != nil {
+		t.Fatal(err)
+	}
+	if other, err := forgetBackup(id, true); err != nil || other != "" {
+		t.Fatalf("forgetBackup = %q, %v", other, err)
+	}
+	if _, err := os.Stat(filepath.Join(target, id)); err == nil {
+		t.Error("backup left although no other PC uses it")
+	}
+}
+
+func TestKeepHistoryCarriesTheBackupTimeToTheNewID(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	defer paths.SetRootForTest(paths.Local, t.TempDir())()
+	at := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
+	_ = store.UpdateState(func(st *store.State) { st.FolderBackups = map[string]time.Time{"old": at} })
+	s := store.Settings{BackupRoot: t.TempDir()}
+	if err := keepHistory(context.Background(), s, "old", "old--pc"); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.LoadState().FolderBackups["old--pc"]; !got.Equal(at) {
+		t.Errorf("backup time of the new id = %v, want %v", got, at)
+	}
+	if err := keepHistory(context.Background(), s, "../bad", "x"); err == nil {
+		t.Error("a failed copy was not reported")
+	}
+	if _, ok := store.LoadState().FolderBackups["x"]; ok {
+		t.Error("backup time carried over after a failed copy")
+	}
+}
+
+func TestCheckBackupRoot(t *testing.T) {
+	for _, ok := range []string{"", `D:\GameSaveBackup`, `\\nas\share\saves`} {
+		if err := checkBackupRoot(ok); err != nil {
+			t.Errorf("%q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{`GameSaveBackup`, `..\x`, `\Backups`, `D:Backups`} {
+		if checkBackupRoot(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestHistoryErrorIsToldApart(t *testing.T) {
+	err := fmt.Errorf("x: %w", &historyError{errors.New("disk full")})
+	if !isHistoryError(err) || isHistoryError(errors.New("other")) {
+		t.Error("history errors not told apart")
 	}
 }

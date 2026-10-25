@@ -1,8 +1,11 @@
-import type { app } from '../../wailsjs/go/models'
+import type { app, store } from '../../wailsjs/go/models'
 import { bytes, ago } from './fmt'
 
 /** A time from Go; the zero time means "never". */
 export const isTime = (t: any) => !!t && new Date(t).getFullYear() > 2000
+
+/** Whether a typed confirmation matches a game's name (case and outer spaces don't matter). */
+export const sameName = (typed: string, name: string) => !!name.trim() && typed.trim().toLowerCase() === name.trim().toLowerCase()
 
 export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 
@@ -26,4 +29,20 @@ export function stateOf(f: app.FolderView): { kind: string; text: string } {
     case 'error': return { kind: 'err', text: 'Error' }
     default: return { kind: '', text: f.state || '…' }
   }
+}
+
+/** The Overview line about folders from other PCs that wait for the user's OK ('' when none do). */
+export function waitingText(waiting: store.WaitingFolder[] | null | undefined): string {
+  const n = waiting?.length ?? 0
+  if (!n) return ''
+  const from = new Set(waiting!.map(w => w.from))
+  const pc = from.size === 1 && waiting![0].from ? waiting![0].from : 'your other PCs'
+  return `${plural(n, 'folder')} from ${pc} wait${n === 1 ? 's' : ''} for your OK`
+}
+
+/** Why a folder from another PC waits for the user's OK before it syncs here. */
+export function waitReason(a: app.AvailableView, autoAddMaxGB: number | undefined): string {
+  if (!a.unknownPlace && autoAddMaxGB && autoAddMaxGB > 0 && a.sizeGB > autoAddMaxGB)
+    return `Bigger than ${autoAddMaxGB} GB, the largest save Syncer adds automatically.`
+  return 'Not a known save location on this PC.'
 }

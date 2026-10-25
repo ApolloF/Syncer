@@ -136,10 +136,10 @@ func TestNewestAndMatcherExtras(t *testing.T) {
 	_ = os.Chtimes(filepath.Join(dir, "save.sav"), old, old)
 	_ = os.Chtimes(filepath.Join(dir, "shots", "1.png"), newer, newer)
 
-	if got := Newest(dir, nil); !got.Equal(newer) {
+	if got := (Folder{Path: dir}).Newest(); !got.Equal(newer) {
 		t.Errorf("Newest = %v, want %v", got, newer)
 	}
-	if got := Newest(dir, []string{"shots"}); !got.Equal(old) {
+	if got := (Folder{Path: dir, Exclude: []string{"shots"}}).Newest(); !got.Equal(old) {
 		t.Errorf("Newest without shots = %v, want %v", got, old)
 	}
 	m := LoadMatcher(dir, "*.png")
@@ -149,7 +149,14 @@ func TestNewestAndMatcherExtras(t *testing.T) {
 	if m.Ignored("save.sav") {
 		t.Error("a left-over Syncer block in .stignore was applied")
 	}
-	if !Newest(filepath.Join(dir, "missing"), nil).IsZero() {
+	write(t, filepath.Join(dir, "later.exe"), "code") // a program isn't a save
+	if got := (Folder{Path: dir}).Newest(); !got.Equal(newer) {
+		t.Errorf("Newest with a program = %v, want %v", got, newer)
+	}
+	if got := (Folder{Path: dir, Mod: true}).Newest(); !got.After(newer) {
+		t.Errorf("a mod folder's newest file isn't its program: %v", got)
+	}
+	if !(Folder{Path: filepath.Join(dir, "missing")}).Newest().IsZero() {
 		t.Error("missing folder has a newest time")
 	}
 }

@@ -21,8 +21,11 @@ import (
 type Conflict struct {
 	Rel          string    `json:"rel"`          // the real file (relative to the folder)
 	Copy         string    `json:"copy"`         // the conflict copy
-	Device       string    `json:"device"`       // short id of the PC that made the copy
+	Device       string    `json:"device"`       // short id of the PC whose version the copy holds (see Attribute)
 	DeviceName   string    `json:"deviceName"`   // filled in by the caller when known
+	// Guessed marks a Device that is only the file name's suffix, which is
+	// the PC that won, not the one the copy came from.
+	Guessed bool `json:"-"`
 	Size         int64     `json:"size"`         // of the real file (0 if missing)
 	Modified     time.Time `json:"modified"`     // of the real file
 	Missing      bool      `json:"missing"`      // the real file no longer exists
@@ -43,6 +46,24 @@ func Parse(name string) (orig, device string, ok bool) {
 		return "", "", false
 	}
 	return m[1] + m[4], m[3], true
+}
+
+// Attribute sets each copy's Device to the PC whose version it holds. The
+// suffix in the file name is the PC whose change won; the copy holds the
+// losing one, which is what Syncthing's own entry for the copy says (it was
+// renamed on the losing PC). lookup returns that entry's modifiedBy for a
+// copy (relative path); when it fails the suffix stays, marked Guessed.
+func Attribute(cs []Conflict, lookup func(copyRel string) (string, error)) {
+	for i := range cs {
+		if dev, err := lookup(cs[i].Copy); err == nil && dev != "" {
+			if len(dev) > 7 {
+				dev = dev[:7]
+			}
+			cs[i].Device, cs[i].Guessed = dev, false
+		} else {
+			cs[i].Guessed = true
+		}
+	}
 }
 
 // skipDir are Syncthing's own folders; copies in there are history already.

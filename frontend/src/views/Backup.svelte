@@ -8,7 +8,7 @@
   import Icon from '../lib/Icon.svelte'
   import Toggle from '../lib/Toggle.svelte'
   import { ui, attempt, refresh, toast } from '../lib/state.svelte'
-  import { ago, bytes, choices } from '../lib/fmt'
+  import { ago, bytes, choices, lastBackupLines } from '../lib/fmt'
   import { backupPlace, folderBackupStatus, googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered } from '../lib/features'
   import { BackupNow, CancelBackup, OpenBackupFolder, PickBackupFolder, SaveSettings, UseDriveApp, SignInGoogle, SignOutGoogle } from '../../wailsjs/go/app/App'
   import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
@@ -35,6 +35,7 @@
     refresh()
   }
   const lb = $derived(o?.lastBackup)
+  const last = $derived(lastBackupLines(o?.lastSuccess, lb))
   let showErrors = $state(false)
 
   onMount(() => {
@@ -156,7 +157,8 @@
 
   <div class="card kv">
     <h2>Last backup</h2>
-    <div class="line"><span class="muted">When</span><span>{ago(lb?.finished)}</span></div>
+    <div class="line"><span class="muted">When</span><span>{last.when}</span></div>
+    {#if last.failed}<div class="line"><span class="faint small">{last.failed}</span></div>{/if}
     <div class="line"><span class="muted">Result</span>
       {#if !lb}<span class="faint">—</span>
       {:else if lb.ok && !lb.folders}<span class="pill warn">No folders to back up</span>

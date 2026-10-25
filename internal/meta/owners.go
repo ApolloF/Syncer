@@ -5,9 +5,11 @@ import (
 	"context"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ApolloF/syncer/internal/accounts"
 	"github.com/ApolloF/syncer/internal/logx"
@@ -49,18 +51,13 @@ func OwnFolders(fs []syncthing.Folder) []syncthing.Folder {
 	return out
 }
 
-// knownPCs are the devices recorded as running Syncer, and those with a
-// folder list in the shared metadata.
+// knownPCs are the devices trusted as the user's PCs running Syncer: the
+// ones the user linked or allowed. A file in the shared metadata is no sign
+// of that, as any device the folder reaches can write one.
 func knownPCs() map[string]bool {
-	m := map[string]bool{}
-	for id := range store.LoadState().SyncerPCs {
-		m[id] = true
-	}
-	es, _ := os.ReadDir(Dir())
-	for _, e := range es {
-		if id, ok := strings.CutSuffix(e.Name(), ".json"); ok && e.Type().IsRegular() && paths.ValidID(id) {
-			m[id] = true
-		}
+	m := maps.Clone(store.LoadState().SyncerPCs)
+	if m == nil {
+		m = map[string]bool{}
 	}
 	return m
 }
@@ -75,7 +72,50 @@ func MarkSyncerPC(id string) {
 		st.SyncerPCs[id] = true
 		delete(st.JoinRequests, id)
 		delete(st.IgnoredPCs, id)
+		delete(st.Introduced, id)
+		delete(st.Unlinking, id) // linked anew: it must not read the old unlink
+		delete(st.LinkSince, id) // and its old notices count for nothing here
+		delete(st.UnlinkSeen, id)
+		if st.LinkedAt == nil {
+			st.LinkedAt = map[string]int64{}
+		}
+		st.LinkedAt[id] = time.Now().Unix()
 	})
+}
+
+// AllowPC makes device d, which asked to join, one of the user's PCs: it is
+// added to Syncthing when it isn't there yet (a PC another one is linked
+// to), and gets the saves.
+func AllowPC(ctx context.Context, c *syncthing.Client, d syncthing.Device) error {
+	if err := admitPC(ctx, c, d); err != nil {
+		return err
+	}
+	_, err := Reconcile(ctx, c)
+	return err
+}
+
+// admitPC is AllowPC short of sharing the saves.
+func admitPC(ctx context.Context, c *syncthing.Client, d syncthing.Device) error {
+	ds, err := c.AllDevices(ctx)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(ds, func(x syncthing.Device) bool { return x.DeviceID == d.DeviceID })
+	switch {
+	case i < 0:
+		if err := c.AddDevice(ctx, d); err != nil {
+			return err
+		}
+	case ds[i].Introducer:
+		// An earlier Syncer linked it as an introducer: trusted with that,
+		// it could add any device here.
+		if err := c.PatchDevice(ctx, d.DeviceID, map[string]any{"introducer": false}); err != nil {
+			return err
+		}
+	}
+	MarkSyncerPC(d.DeviceID)
+	_ = c.DismissPendingDevice(ctx, d.DeviceID)
+	return nil
 }
 
 // ForgetSyncerPC drops device from the PCs known to run Syncer, and any
@@ -85,6 +125,9 @@ func ForgetSyncerPC(id string) {
 		delete(st.SyncerPCs, id)
 		delete(st.JoinRequests, id)
 		delete(st.IgnoredPCs, id)
+		delete(st.Introduced, id)
+		delete(st.LinkSince, id)
+		delete(st.LinkedAt, id)
 	})
 }
 
@@ -100,11 +143,27 @@ func IgnorePC(id string) {
 	})
 }
 
-// JoinRequests lists the linked devices waiting to be allowed as one of the
-// user's PCs, and those that were ignored.
+// JoinRequests lists the devices waiting to be allowed as one of the user's
+// PCs (linked devices that ask, and PCs another Syncer PC is linked to), and
+// those that were ignored.
 func JoinRequests() (waiting, ignored []string) {
 	st := store.LoadState()
-	return slices.Sorted(maps.Keys(st.JoinRequests)), slices.Sorted(maps.Keys(st.IgnoredPCs))
+	w := maps.Clone(st.JoinRequests)
+	for id := range st.Introduced {
+		if !st.IgnoredPCs[id] && !st.SyncerPCs[id] {
+			if w == nil {
+				w = map[string]bool{}
+			}
+			w[id] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(w)), slices.Sorted(maps.Keys(st.IgnoredPCs))
+}
+
+// Introductions are the PCs other Syncer PCs are linked to and this one
+// isn't (device id -> its name and who is linked to it).
+func Introductions() map[string]store.Introduced {
+	return store.LoadState().Introduced
 }
 
 // MarkOwnFolder records that Syncer added folder id.
@@ -128,21 +187,20 @@ const (
 	pcWaiting // offers the shared settings: the user decides
 )
 
-// judgePC decides about a linked device that isn't a known Syncer PC. One
-// that already syncs the shared settings was given them by Syncer, so it is
-// trusted: that is also how a third PC a trusted PC introduced through the
-// shared settings folder ends up, as Syncthing adds it to that folder here.
-// A device introduced through any other folder is not trusted for that: it
-// may belong to someone else. Any other device that offers the shared
-// settings only gets to ask, and must not get the saves because of a folder
-// name. accepts is asked only when needed.
-func judgePC(id string, ignored map[string]bool, offers bool, accepts func() bool) pcVerdict {
+// judgePC decides about a linked device that isn't a known Syncer PC. A
+// device that offers the shared settings only gets to ask, and must not get
+// the saves because of a folder name. Once, when upgrading from a Syncer
+// that trusted any device syncing the shared settings (one a linked PC
+// introduced through them too), a device that already syncs them keeps that
+// trust: under those rules the user had linked it (accepted is asked only
+// then). After that only the user makes a device trusted.
+func judgePC(id string, ignored map[string]bool, offers, upgrading bool, accepted func() bool) pcVerdict {
 	switch {
 	case ignored[id]:
 		return pcStranger
 	case offers:
 		return pcWaiting
-	case accepts():
+	case upgrading && accepted():
 		return pcTrusted
 	}
 	return pcStranger
@@ -153,24 +211,30 @@ func judgePC(id string, ignored map[string]bool, offers bool, accepts func() boo
 func syncerPCs(ctx context.Context, c *syncthing.Client, me string, ds []syncthing.Device) map[string]bool {
 	known := knownPCs()
 	st := store.LoadState()
+	upgrading := !st.TrustMigrated
+	var legacy map[string]bool
+	if upgrading {
+		legacy = legacyPCs(ctx, c)
+	}
 	pending, _ := c.PendingFolders(ctx)
 	pcs := map[string]bool{}
-	var found, stale []string
+	var found []string
 	waiting := map[string]bool{}
-	linked := map[string]bool{}
 	for _, d := range ds {
 		id := d.DeviceID
-		linked[id] = true
 		if id == me {
 			continue
 		}
 		if !known[id] {
 			_, offers := pending[FolderID].OfferedBy[id]
-			accepts := func() bool {
+			accepted := func() bool {
+				if legacy[id] {
+					return true
+				}
 				comp, err := c.FolderCompletion(ctx, FolderID, id)
 				return err == nil && comp.Accepted()
 			}
-			switch judgePC(id, st.IgnoredPCs, offers, accepts) {
+			switch judgePC(id, st.IgnoredPCs, offers, upgrading, accepted) {
 			case pcWaiting:
 				waiting[id] = true
 				continue
@@ -181,22 +245,20 @@ func syncerPCs(ctx context.Context, c *syncthing.Client, me string, ds []syncthi
 		}
 		pcs[id] = true
 	}
-	for id := range st.IgnoredPCs {
-		if !linked[id] {
-			stale = append(stale, id)
-		}
-	}
-	if len(found) > 0 || len(stale) > 0 || !maps.Equal(waiting, st.JoinRequests) {
+	// The old rules apply once, whether or not every introducer could be
+	// turned off yet (see noIntroducers, which tries every round).
+	migrated := upgrading
+	if len(found) > 0 || migrated || !maps.Equal(waiting, st.JoinRequests) {
 		store.UpdateState(func(st *store.State) {
 			if st.SyncerPCs == nil {
 				st.SyncerPCs = map[string]bool{}
 			}
 			for _, id := range found {
 				st.SyncerPCs[id] = true
-				logx.Printf("meta: %s runs Syncer", id[:min(7, len(id))])
+				logx.Printf("meta: %s runs Syncer", shortID(id))
 			}
-			for _, id := range stale {
-				delete(st.IgnoredPCs, id)
+			if migrated {
+				st.TrustMigrated = true
 			}
 			// The user may have allowed or ignored a device since the
 			// state was read above.
@@ -213,6 +275,213 @@ func syncerPCs(ctx context.Context, c *syncthing.Client, me string, ds []syncthi
 	}
 	return pcs
 }
+
+// legacyPCs are the devices earlier Syncers took for Syncer PCs by their
+// file in the shared settings, and shared those with: they keep that trust
+// once, even while they are offline.
+func legacyPCs(ctx context.Context, c *syncthing.Client) map[string]bool {
+	fs, err := c.AllFolders(ctx)
+	if err != nil {
+		return nil
+	}
+	m := map[string]bool{}
+	for _, f := range fs {
+		if f.ID != FolderID {
+			continue
+		}
+		for _, d := range f.Devices {
+			if fi, err := os.Lstat(filepath.Join(Dir(), d.DeviceID+".json")); err == nil && fi.Mode().IsRegular() && paths.ValidID(d.DeviceID) {
+				m[d.DeviceID] = true
+			}
+		}
+	}
+	return m
+}
+
+// noIntroducers turns off Syncthing's introducer for every device that has
+// to do with Syncer: through it a device could add any other here, past the
+// user's OK. Earlier Syncers set it on every PC they linked, and Syncthing
+// passes it on to the devices those introduced. That covers the Syncer PCs
+// (pcs), devices another one introduced, those asking to join or turned
+// down, and any device a folder of Syncer's (own) is shared with. An
+// introducer the user set for something else (a notes folder) is left
+// alone. Devices an introducer added stay. Run every round, so a failed
+// change is tried again; it returns the devices it failed for.
+func noIntroducers(ctx context.Context, c *syncthing.Client, ds []syncthing.Device, pcs map[string]bool,
+	fs []syncthing.Folder, own map[string]bool) (failed map[string]bool) {
+	failed = map[string]bool{}
+	st := store.LoadState()
+	ours := map[string]bool{}
+	for _, f := range fs {
+		if f.ID == FolderID || own[f.ID] {
+			for _, d := range f.Devices {
+				ours[d.DeviceID] = true
+			}
+		}
+	}
+	for _, d := range ds {
+		id := d.DeviceID
+		_, introduced := st.Introduced[id]
+		if !d.Introducer || !(pcs[id] || d.IntroducedBy != "" || st.JoinRequests[id] || st.IgnoredPCs[id] || introduced || ours[id]) {
+			continue
+		}
+		if err := c.PatchDevice(ctx, id, map[string]any{"introducer": false}); err != nil {
+			logx.Printf("meta: stop %s introducing PCs: %v", shortID(id), err)
+			failed[id] = true
+			continue
+		}
+		logx.Printf("meta: %s no longer introduces PCs", shortID(id))
+	}
+	return failed
+}
+
+// noteIntroductions records the PCs the trusted PCs say they are linked to
+// and this one isn't, as requests the user decides on: a PC only ever asks
+// for another, it never makes it trusted here. A list counts only in the
+// file its own PC last wrote (any PC can write any file in the shared
+// settings, see checkWriters); for a PC whose file can't be read this
+// round (unsure) the PCs it introduced before stay. Turned down PCs that
+// are neither linked nor introduced any more are forgotten, but only in a
+// round where every linked PC's file could be read: one that can't may
+// still introduce them.
+func noteIntroductions(me string, ds []syncthing.Device, unsure map[string]bool) {
+	st := store.LoadState()
+	linked := map[string]bool{}
+	for _, d := range ds {
+		linked[d.DeviceID] = true
+	}
+	intro := map[string]store.Introduced{}
+	for id, in := range st.Introduced {
+		if unsure[in.Via] && linked[in.Via] && !st.SyncerPCs[id] {
+			intro[id] = in
+		}
+	}
+	for _, df := range readOtherFiles(me) {
+		if !linked[df.Device] {
+			continue
+		}
+		var add []PCRef
+		for _, p := range df.PCs {
+			if _, seen := intro[p.ID]; !seen && p.ID != me && !st.SyncerPCs[p.ID] && validDeviceID(p.ID) {
+				add = append(add, p)
+			}
+		}
+		for _, p := range add {
+			intro[p.ID] = store.Introduced{Name: trimName(p.Name), Via: df.Device}
+		}
+	}
+	sure := true
+	for id := range unsure {
+		sure = sure && !linked[id]
+	}
+	var stale []string
+	for id := range st.IgnoredPCs {
+		if _, ok := intro[id]; !ok && !linked[id] && sure {
+			stale = append(stale, id)
+		}
+	}
+	if len(stale) == 0 && maps.Equal(intro, st.Introduced) {
+		return
+	}
+	store.UpdateState(func(st *store.State) {
+		for _, id := range stale {
+			delete(st.IgnoredPCs, id)
+		}
+		st.Introduced = nil
+		for id, in := range intro {
+			if st.SyncerPCs[id] { // allowed since the state was read above
+				continue
+			}
+			if st.Introduced == nil {
+				st.Introduced = map[string]store.Introduced{}
+			}
+			st.Introduced[id] = in
+		}
+	})
+}
+
+// allowVouched links the PCs that allowed this one (me) on their side, so
+// a pair takes one Allow, on either PC. A PC counts when a trusted PC's own
+// file (read this round, see readOtherFiles) introduces it and its own file,
+// which that PC relays here, lists me. Of that file only the list is read,
+// and only when Syncthing says the PC itself last wrote it: any device the
+// shared settings reach can put one there. A PC turned down here stays so.
+// It returns the PCs linked.
+func allowVouched(ctx context.Context, c *syncthing.Client, me string, ds []syncthing.Device) []string {
+	st := store.LoadState()
+	linked := map[string]bool{}
+	for _, d := range ds {
+		linked[d.DeviceID] = true
+	}
+	cands := map[string]bool{}
+	for _, df := range readOtherFiles(me) {
+		if !linked[df.Device] {
+			continue
+		}
+		for _, p := range df.PCs {
+			if _, in := st.Introduced[p.ID]; in && !st.IgnoredPCs[p.ID] {
+				cands[p.ID] = true
+			}
+		}
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	files := map[string]summedFile{}
+	for _, f := range readSummed() {
+		if cands[f.Device] {
+			files[f.Device] = f
+		}
+	}
+	var allowed []string
+	for _, id := range slices.Sorted(maps.Keys(cands)) {
+		f, ok := files[id]
+		if !ok || !slices.ContainsFunc(f.PCs, func(p PCRef) bool { return p.ID == me }) {
+			continue
+		}
+		by, err := c.ModifiedBy(ctx, FolderID, id+".json")
+		if after, _ := fileSum(id); err != nil || after != f.sum || !strings.EqualFold(by, shortID(id)) {
+			continue // written by another, or not known yet: next round
+		}
+		name := cmp.Or(st.Introduced[id].Name, "PC "+shortID(id))
+		if err := admitPC(ctx, c, syncthing.Device{DeviceID: id, Name: name, Addresses: []string{"dynamic"}}); err != nil {
+			logx.Printf("meta: link %s, which allowed this PC: %v", shortID(id), err)
+			continue
+		}
+		logx.Printf("meta: %s (%s) allowed this PC: linked it here too", name, shortID(id))
+		allowed = append(allowed, id)
+	}
+	return allowed
+}
+
+// validDeviceID reports whether id is a Syncthing device id in its usual
+// form (eight dash-separated groups of seven base32 characters).
+func validDeviceID(id string) bool {
+	if len(id) != 63 {
+		return false
+	}
+	for i, ch := range id {
+		if i%8 == 7 {
+			if ch != '-' {
+				return false
+			}
+		} else if !(ch >= 'A' && ch <= 'Z' || ch >= '2' && ch <= '7') {
+			return false
+		}
+	}
+	return true
+}
+
+// trimName keeps a name another PC sent to a sensible length.
+func trimName(n string) string {
+	n = strings.TrimSpace(n)
+	if r := []rune(n); len(r) > 64 {
+		n = string(r[:64])
+	}
+	return n
+}
+
+func shortID(id string) string { return id[:min(7, len(id))] }
 
 // Whose a folder is.
 const (

@@ -1,7 +1,9 @@
 <script lang="ts">
   import Icon from '../lib/Icon.svelte'
   import { ui, attempt, refresh, showIssue } from '../lib/state.svelte'
-  import { ago, pausedUntil } from '../lib/fmt'
+  import { lastBackupLines, pausedUntil } from '../lib/fmt'
+  import { waitingText } from '../lib/folders'
+  import { showElsewhere } from './Games.svelte'
   import { googleBackendOn, googleRetired, googleRetiredNotice, googleSignInOffered, overviewSubtitle, updatesByRebuild } from '../lib/features'
   import { InstallSyncthing, StartSyncthing, BackupNow, Resume, InstallUpdate, CheckForUpdate, DismissNotice } from '../../wailsjs/go/app/App'
   import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
@@ -57,6 +59,8 @@
       s.push({ key: 'conflicts', icon: 'alert', title: `${o.conflicts} save${o.conflicts > 1 ? 's have' : ' has'} two versions`, text: 'Two PCs changed the same save. Pick which one to keep; the other goes into the backup history.', action: 'Review' })
     if (o.overlaps)
       s.push({ key: 'overlaps', icon: 'alert', title: `${o.overlaps} save folder${o.overlaps > 1 ? 's are' : ' is'} synced twice`, text: 'A bigger folder from an older setup also holds it, so the same files sync and back up twice.', action: 'Review' })
+    if (o.waiting?.length)
+      s.push({ key: 'waiting', icon: 'games', title: waitingText(o.waiting), text: 'Syncer adds only known save folders, within the size limit, on its own. Check these and sync the ones you know.', action: 'Review' })
     if (o.pending)
       s.push({ key: 'pending', icon: 'devices', title: `${o.pending} PC${o.pending > 1 ? 's' : ''} want${o.pending > 1 ? '' : 's'} to connect`, text: 'Review and accept the request.', action: 'Review' })
     return s
@@ -72,11 +76,13 @@
     else if (key === 'link' || key === 'pending' || key === 'peerbehind') ui.view = 'devices'
     else if (key === 'peerahead') run(key, async () => { if (!(await CheckForUpdate())) throw new Error("GitHub doesn't offer a newer Syncer to this PC yet") })
     else if (key === 'conflicts' || key === 'overlaps') ui.view = 'games'
+    else if (key === 'waiting') { showElsewhere(); ui.view = 'games' }
     else if (key === 'paused') run(key, Resume, 'Syncing and backups resumed')
     else if (key === 'update') run(key, InstallUpdate)
   }
 
   const lb = $derived(o?.lastBackup)
+  const last = $derived(lastBackupLines(o?.lastSuccess, lb))
   const backupState = $derived.by(() => {
     if (!o) return { kind: '', text: '' }
     if (o.backingUp) return { kind: 'accent', text: 'Running' }
@@ -139,7 +145,8 @@
 
   <div class="card stat">
     <div class="row"><Icon name="cloud" /><span class="muted">Last backup</span></div>
-    <div class="big small">{o?.backingUp ? 'Backing up…' : ago(lb?.finished)}</div>
+    <div class="big small">{o?.backingUp ? 'Backing up…' : last.when}</div>
+    {#if last.failed && !o?.backingUp}<p class="faint small ellipsis" title={last.failed}>{last.failed}</p>{/if}
     <div class="row">
       <span class="pill {backupState.kind}">{backupState.text}</span>
       <span class="grow"></span>
@@ -160,7 +167,7 @@
     width: 38px; height: 38px; border-radius: 10px; flex: none; display: grid; place-items: center;
     background: var(--accent-soft); color: var(--accent);
   }
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
   .stat {
     display: flex; flex-direction: column; gap: 10px; text-align: left;
     font: inherit; color: inherit; cursor: default;
@@ -170,5 +177,5 @@
   .stat :global(svg) { color: var(--muted); }
   .big { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
   .big.small { font-size: 22px; padding: 6px 0 5px; }
-  @media (max-width: 860px) { .stats { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 860px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

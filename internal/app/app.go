@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -114,8 +116,13 @@ func (a *App) watch(ctx context.Context) {
 			switch e.Type {
 			case "PendingFoldersChanged", "DeviceConnected", "RemoteIndexUpdated":
 				reconcile = true
-			case "FolderCompletion", "LocalIndexUpdated":
+			case "FolderCompletion":
 				arrived = true
+			case "LocalIndexUpdated":
+				arrived = true
+				// Another PC's file in the shared settings arrived (an
+				// unlink must be acted on in seconds).
+				reconcile = reconcile || eventFolder(e) == meta.FolderID
 			}
 		}
 		if arrived {
@@ -134,6 +141,15 @@ func (a *App) watch(ctx context.Context) {
 			runtime.EventsEmit(ctx, "changed")
 		}
 	}
+}
+
+// eventFolder is the folder a Syncthing event is about ("" if none).
+func eventFolder(e syncthing.Event) string {
+	var d struct {
+		Folder string `json:"folder"`
+	}
+	_ = json.Unmarshal(e.Data, &d)
+	return d.Folder
 }
 
 // autoAddLoop picks up newly installed games while the window is open.
@@ -183,7 +199,9 @@ type Overview struct {
 	Features   FeatureFlags     `json:"features"`
 	Notices    []string         `json:"notices"` // one-time notices to show (see activeNotices)
 	Target     string           `json:"target"`
-	LastBackup *store.BackupRun `json:"lastBackup"`
+	LastBackup *store.BackupRun `json:"lastBackup"` // the last attempt, failed or not
+	// LastSuccess is when a backup last finished without errors; zero if never.
+	LastSuccess time.Time `json:"lastSuccess"`
 	BackingUp  bool             `json:"backingUp"`
 	Gaming     bool             `json:"gaming"` // automatic backups are holding off right now
 	Paused     bool             `json:"paused"` // syncing and automatic backups are paused (until settings.pausedUntil)
@@ -192,6 +210,8 @@ type Overview struct {
 	Update     *UpdateInfo      `json:"update"` // a newer release, if one is out
 	// VersionGaps: linked PCs running an older or newer Syncer than this one.
 	VersionGaps []VersionGap `json:"versionGaps"`
+	// Waiting: folders from other PCs that wait for the user's OK.
+	Waiting []store.WaitingFolder `json:"waiting"`
 }
 
 // FolderIssue is a synced folder Syncthing has a problem with, and what it is.
@@ -206,12 +226,13 @@ type FolderIssue struct {
 
 func (a *App) Overview() Overview {
 	s := store.LoadSettings()
-	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: store.LoadState().LastBackup,
+	st0 := store.LoadState()
+	o := Overview{Settings: s, Drive: backup.DetectDrive(s.DriveRoot), LastBackup: st0.LastBackup, LastSuccess: st0.LastSuccess, Waiting: st0.Waiting,
 		Paused: s.Paused(), Version: version, Update: availableUpdate()}
 	o.Target, _ = backupTarget(s)
 	o.Google = googleView(s)
 	o.Features = buildFeatures()
-	o.Notices = activeNotices(s, store.LoadState())
+	o.Notices = activeNotices(s, st0)
 	o.Syncthing.Installed = syncthing.FindExe() != ""
 	a.mu.Lock()
 	o.BackingUp = a.backingUp
@@ -366,6 +387,9 @@ type DevicesView struct {
 type JoinView struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Via is the name of the linked PC that is linked to this one, when
+	// that is how it came up ("" for a linked device that asks itself).
+	Via string `json:"via"`
 }
 
 func (a *App) Devices() (DevicesView, error) {
@@ -414,17 +438,21 @@ func (a *App) Devices() (DevicesView, error) {
 		v.Devices = append(v.Devices, dv)
 	}
 	sort.Slice(v.Devices, func(i, j int) bool { return v.Devices[i].Name < v.Devices[j].Name })
+	v.Requests, v.Ignored = joinViews(ctx, c)
 	if p, err := c.PendingDevices(ctx); err == nil {
 		for id, pd := range p {
+			if slices.ContainsFunc(v.Requests, func(j JoinView) bool { return j.ID == id }) {
+				continue // a PC a linked PC is linked to: Allow on its request links it
+			}
 			v.Pending = append(v.Pending, PendingView{ID: id, Name: pd.Name, Address: pd.Address, Time: pd.Time})
 		}
 	}
-	v.Requests, v.Ignored = joinViews(ctx, c)
 	return v, nil
 }
 
-// joinViews lists the linked devices that wait to be allowed as one of the
-// user's PCs, and those turned down. Ones no longer linked are left out.
+// joinViews lists the devices that wait to be allowed as one of the user's
+// PCs, and those turned down. Ones neither linked nor offered by a linked PC
+// any more are left out.
 func joinViews(ctx context.Context, c *syncthing.Client) (waiting, ignored []JoinView) {
 	all, err := c.AllDevices(ctx)
 	if err != nil {
@@ -435,15 +463,23 @@ func joinViews(ctx context.Context, c *syncthing.Client) (waiting, ignored []Joi
 		names[d.DeviceID] = cmp.Or(d.Name, d.DeviceID[:7])
 	}
 	ws, is := meta.JoinRequests()
-	view := func(ids []string) (out []JoinView) {
-		for _, id := range ids {
-			if n, ok := names[id]; ok {
-				out = append(out, JoinView{ID: id, Name: n})
-			}
+	return joinList(ws, names, meta.Introductions()), joinList(is, names, meta.Introductions())
+}
+
+// joinList describes the devices ids: by their name here (names) when
+// linked, else as the PC a linked one is linked to (intro).
+func joinList(ids []string, names map[string]string, intro map[string]store.Introduced) (out []JoinView) {
+	for _, id := range ids {
+		in, introduced := intro[id]
+		n, linked := names[id]
+		switch {
+		case introduced:
+			out = append(out, JoinView{ID: id, Name: cmp.Or(n, in.Name, id[:min(7, len(id))]), Via: cmp.Or(names[in.Via], in.Via[:min(7, len(in.Via))])})
+		case linked:
+			out = append(out, JoinView{ID: id, Name: n})
 		}
-		return out
 	}
-	return view(ws), view(is)
+	return out
 }
 
 // normalizeID accepts IDs with or without dashes/spaces, any case.
@@ -525,10 +561,9 @@ func linkedDevice(id, name string) syncthing.Device {
 	if name == "" {
 		name = "PC " + id[:7]
 	}
-	// Introducer lets a third PC join through any already linked PC, so the
-	// user never has to pair every PC with every other one. It is only set
-	// here, where the user chose the device.
-	return syncthing.Device{DeviceID: id, Name: name, Addresses: []string{"dynamic"}, Introducer: true}
+	// Never an introducer: that would let it add any device here past the
+	// user's OK. Syncer offers the PCs it is linked to as requests instead.
+	return syncthing.Device{DeviceID: id, Name: name, Addresses: []string{"dynamic"}}
 }
 
 // pair links a PC the user chose on purpose: by entering its ID, or by
@@ -563,8 +598,9 @@ func joinRequest(id string, waiting, ignored []string, allowIgnored bool) (strin
 	return "", errors.New("that PC isn't asking to join (any more)")
 }
 
-// AllowJoin makes a linked device that offered Syncer's shared settings one
-// of the user's PCs, and shares the saves with it.
+// AllowJoin makes a device that asked to join (a linked device that offered
+// Syncer's shared settings, or a PC a linked PC is linked to) one of the
+// user's PCs, links it if it isn't yet, and shares the saves with it.
 func (a *App) AllowJoin(id string) error {
 	waiting, ignored := meta.JoinRequests()
 	id, err := joinRequest(id, waiting, ignored, true)
@@ -577,8 +613,8 @@ func (a *App) AllowJoin(id string) error {
 	}
 	ctx, cancel := a.callCtx()
 	defer cancel()
-	meta.MarkSyncerPC(id)
-	if _, err := meta.Reconcile(ctx, c); err != nil {
+	enableSync()
+	if err := meta.AllowPC(ctx, c, linkedDevice(id, meta.Introductions()[id].Name)); err != nil {
 		return err
 	}
 	logx.Printf("allowed device %s as one of the user's PCs", id[:7])
@@ -609,19 +645,22 @@ func (a *App) DismissDevice(id string) error {
 	return c.DismissPendingDevice(ctx, id)
 }
 
-func (a *App) RemoveDevice(id string) error {
+// RemoveDevice unlinks a PC (see meta.Unlink). It reports whether the other
+// PC was told, so it drops the link too.
+func (a *App) RemoveDevice(id string) (bool, error) {
 	c, err := a.client()
 	if err != nil {
-		return err
+		return false, err
 	}
 	ctx, cancel := a.callCtx()
 	defer cancel()
-	if err := c.RemoveDevice(ctx, id); err != nil {
-		return err
+	told, err := meta.Unlink(ctx, c, id)
+	if err != nil {
+		return told, err
 	}
-	meta.ForgetSyncerPC(id)
+	logx.Printf("unlinked device %s (told: %v)", id[:min(7, len(id))], told)
 	runtime.EventsEmit(a.ctx, "changed")
-	return nil
+	return told, nil
 }
 
 func (a *App) CopyText(s string) { _ = runtime.ClipboardSetText(a.ctx, s) }
@@ -793,6 +832,9 @@ func (a *App) Log() []string { return logx.Tail(200) }
 
 func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 	old := store.LoadSettings()
+	if err := checkBackupRoot(in.BackupRoot); err != nil {
+		return old, err
+	}
 	s, err := store.UpdateSettings(func(s *store.Settings) { applySettingsInput(s, in, old) })
 	if err != nil {
 		return s, err
@@ -819,6 +861,15 @@ func (a *App) SaveSettings(in store.Settings) (store.Settings, error) {
 		go a.publishSettings()
 	}
 	return s, nil
+}
+
+// checkBackupRoot rejects a backup folder that isn't a full path: a relative
+// one would end up wherever the app happens to run.
+func checkBackupRoot(root string) error {
+	if root != "" && !filepath.IsAbs(root) {
+		return errors.New("the backup folder must be a full path, like D:/GameSaveBackup")
+	}
+	return nil
 }
 
 // applySettingsInput takes the settings the UI sends into s, the stored ones

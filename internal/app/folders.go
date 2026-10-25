@@ -562,7 +562,7 @@ func (a *App) SetFolderSync(id string, on bool) error {
 		if err := a.share(ctx, c, sid, lf.Label, lf.Path, s.NoBackup[id]); err != nil {
 			return err
 		}
-		_ = forgetBackup(id, false) // backups continue under the synced id
+		_, _ = forgetBackup(id, false) // backups continue under the synced id
 		_, err = store.UpdateSettings(func(s *store.Settings) {
 			delete(s.BackupOnly, id)
 			delete(s.NoBackup, id)
@@ -574,7 +574,7 @@ func (a *App) SetFolderSync(id string, on bool) error {
 	if err := splitGuard(id); err != nil {
 		return err
 	}
-	if _, err := a.stopSync(ctx, c, id); err != nil {
+	if _, err := a.stopSync(ctx, c, id); err != nil && !isHistoryError(err) {
 		return err
 	}
 	runtime.EventsEmit(a.ctx, "changed")
@@ -601,8 +601,8 @@ func (a *App) stopSync(ctx context.Context, c *syncthing.Client, id string) (str
 	if err != nil {
 		return "", err
 	}
-	keepHistory(a.ctx, s, f.ID, bid)
-	_ = forgetBackup(f.ID, false) // this PC no longer backs up the synced id
+	histErr := keepHistory(a.ctx, s, f.ID, bid)
+	_, _ = forgetBackup(f.ID, false) // this PC no longer backs up the synced id
 	dropModState(ctx, c, f.ID)
 	_, _ = meta.Reconcile(ctx, c)
 	if s.NoBackup[bid] {
@@ -610,8 +610,19 @@ func (a *App) stopSync(ctx context.Context, c *syncthing.Client, id string) (str
 	} else {
 		logx.Printf("stopped syncing %s; still backing it up", label)
 	}
+	if histErr != nil {
+		return bid, &historyError{histErr}
+	}
 	return bid, nil
 }
+
+// historyError means a game stopped syncing but its backup history didn't all
+// come along to the new id. Callers that only stop syncing carry on; deleting
+// the saves must not.
+type historyError struct{ err error }
+
+func (e *historyError) Error() string { return "keep the backup history: " + e.err.Error() }
+func (e *historyError) Unwrap() error { return e.err }
 
 // toBackupOnly records a synced folder as backup-only on this PC and returns
 // its new id. A game whose backup was off is now neither synced nor backed up.
@@ -664,17 +675,19 @@ func findFolder(ctx context.Context, c *syncthing.Client, id string) (syncthing.
 
 // RemoveFolder takes a game out of Syncer on this PC: it stops syncing and
 // backing it up and removes Syncthing's marker files. Save files are never
-// deleted; with deleteBackup its Drive backup and history go too.
-func (a *App) RemoveFolder(id string, deleteBackup bool) error {
+// deleted; with deleteBackup its Drive backup and history go too, unless
+// another PC still backs it up: then the returned message says so.
+func (a *App) RemoveFolder(id string, deleteBackup bool) (string, error) {
 	if applying.has(id) {
-		return errApplying
+		return "", errApplying
 	}
 	if err := splitGuard(id); err != nil {
-		return err
+		return "", err
 	}
 	if lf, ok := store.LoadSettings().BackupOnly[id]; ok {
-		if err := forgetBackup(id, deleteBackup); err != nil {
-			return err
+		other, err := forgetBackup(id, deleteBackup)
+		if err != nil {
+			return "", err
 		}
 		if _, err := store.UpdateSettings(func(s *store.Settings) {
 			delete(s.BackupOnly, id)
@@ -682,27 +695,27 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 			delete(s.Mods, id)
 			s.Dismissed[dismissKey(lf.Path)] = true
 		}); err != nil {
-			return err
+			return "", err
 		}
 		logx.Printf("removed %s", lf.Label)
 		runtime.EventsEmit(a.ctx, "changed")
-		return nil
+		return removeMessage(deleteBackup, other), nil
 	}
 	c, err := a.client()
 	if err != nil {
-		return err
+		return "", err
 	}
 	ctx, cancel := a.callCtx()
 	defer cancel()
 	f, err := findFolder(ctx, c, id)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Hold the backup lock from here on: once the folder is gone from the
 	// list, a failed deletion couldn't be retried from Syncer.
 	unlock, err := backup.Lock()
 	if err != nil && deleteBackup {
-		return err
+		return "", err
 	}
 	if err == nil {
 		defer func() {
@@ -715,10 +728,10 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 	}
 	target, ok := backupTarget(store.LoadSettings())
 	if deleteBackup && !ok {
-		return errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
+		return "", errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
 	}
 	if err := c.RemoveFolder(ctx, id); err != nil {
-		return err
+		return "", err
 	}
 	cleanMarkers(f.Path)
 	_, _ = store.UpdateSettings(func(s *store.Settings) {
@@ -728,14 +741,16 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 		delete(s.Mods, id)
 	})
 	dropModState(ctx, c, id)
+	var other string
 	if unlock != nil && paths.ValidID(id) {
-		err := backup.Forget(target, id, deleteBackup)
+		var err error
+		other, err = backup.Forget(target, id, deleteBackup)
 		unlock()
 		unlock = nil
 		if err != nil {
 			_, _ = meta.Reconcile(ctx, c)
 			runtime.EventsEmit(a.ctx, "changed")
-			return fmt.Errorf("stopped syncing, but the backup wasn't deleted: %w", err)
+			return "", fmt.Errorf("stopped syncing, but the backup wasn't deleted: %w", err)
 		}
 	}
 	// Not while holding the backup lock: reconciling may carry out another
@@ -743,32 +758,65 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 	_, _ = meta.Reconcile(ctx, c)
 	logx.Printf("removed %s (backup deleted: %v)", cmpOr(f.Label, id), deleteBackup)
 	runtime.EventsEmit(a.ctx, "changed")
+	return removeMessage(deleteBackup, other), nil
+}
+
+// removeMessage is what RemoveFolder tells the user about the backup: nothing
+// unless they asked for it to be deleted.
+func removeMessage(deleteBackup bool, stillBackedUpBy string) string {
+	switch {
+	case !deleteBackup:
+		return ""
+	case stillBackedUpBy != "":
+		return stillBackedUpBy + " still backs it up here, so the backup stays"
+	}
+	return "Backup deleted"
+}
+
+func isHistoryError(err error) bool {
+	var h *historyError
+	return errors.As(err, &h)
+}
+
+// keepHistory carries a game's backup over to its new backup-only id: the
+// history, this PC's info and file list, and when it was last backed up, so
+// the game's row still says "Backed up".
+func keepHistory(ctx context.Context, s store.Settings, from, to string) error {
+	target, ok := backupTarget(s)
+	if !ok {
+		return nil
+	}
+	err := backup.CopyHistory(ctx, target, from, to)
+	if err == nil {
+		err = backup.CopyInfo(target, from, to)
+	}
+	if err != nil {
+		logx.Printf("keep backup history of %s: %v", from, err)
+		return err
+	}
+	store.UpdateState(func(st *store.State) {
+		if t, ok := st.FolderBackups[from]; ok {
+			if st.FolderBackups == nil {
+				st.FolderBackups = map[string]time.Time{}
+			}
+			st.FolderBackups[to] = t
+		}
+	})
 	return nil
 }
 
-// keepHistory copies a game's backup history to its new backup-only id.
-func keepHistory(ctx context.Context, s store.Settings, from, to string) {
-	target, ok := backupTarget(s)
-	if !ok {
-		return
-	}
-	if err := backup.CopyHistory(ctx, target, from, to); err != nil {
-		logx.Printf("keep backup history of %s: %v", from, err)
-	}
-}
-
 // forgetBackup drops a folder's backup bookkeeping and, if asked, its backup.
-func forgetBackup(id string, deleteBackup bool) error {
+func forgetBackup(id string, deleteBackup bool) (string, error) {
 	if !paths.ValidID(id) {
-		return nil // never backed up
+		return "", nil // never backed up
 	}
 	target, ok := backupTarget(store.LoadSettings())
 	if deleteBackup && !ok {
-		return errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
+		return "", errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
 	}
 	unlock, err := backup.Lock()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer unlock()
 	return backup.Forget(target, id, deleteBackup)
@@ -855,7 +903,7 @@ func (a *App) stopSyncWhere(what string, match func(discover.Class) bool) (int, 
 		if f.ID == meta.FolderID || splitGuard(f.ID) != nil || !match(discover.Classify(cmpOr(f.Label, f.ID), f.Path)) {
 			continue
 		}
-		if _, err := a.stopSync(ctx, c, f.ID); err != nil {
+		if _, err := a.stopSync(ctx, c, f.ID); err != nil && !isHistoryError(err) {
 			logx.Printf("%s %s: %v", what, cmpOr(f.Label, f.ID), err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", cmpOr(f.Label, f.ID), err)
@@ -873,13 +921,17 @@ func (a *App) stopSyncWhere(what string, match func(discover.Class) bool) (int, 
 // ---- other PCs ---------------------------------------------------------------
 
 type AvailableView struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Path   string `json:"path"`
-	From   string `json:"from"`
-	Reason string `json:"reason"` // a meta.Skip* reason, or meta.Pending
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Path    string `json:"path"`
+	From    string `json:"from"`
+	Reason  string `json:"reason"`  // a meta.Skip* reason, or meta.Pending
 	Kind    string `json:"kind"`    // mod folders: mods.Kind*; "launcher" for a launcher's own data
 	ModGame string `json:"modGame"` // … and the mod manager's game id
+	SizeGB  int    `json:"sizeGB"`  // as the other PC published it (0 = unknown)
+	// UnknownPlace: it waits because it isn't a known save folder of the
+	// game on this PC (reason "ask"), not only because of its size.
+	UnknownPlace bool `json:"unknownPlace"`
 }
 
 // Available lists games your other PCs sync that this PC doesn't.
@@ -900,7 +952,8 @@ func (a *App) Available() ([]AvailableView, error) {
 		if v.Launcher != "" {
 			kind = "launcher" // the launcher adds it itself
 		}
-		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: kind, ModGame: v.ModGame})
+		out = append(out, AvailableView{ID: v.ID, Label: cmpOr(v.Label, v.ID), Path: v.Path, From: v.From, Reason: v.Reason, Kind: kind, ModGame: v.ModGame, SizeGB: v.SizeGB,
+			UnknownPlace: v.UnknownPlace})
 	}
 	return out, nil
 }
@@ -928,7 +981,11 @@ func (a *App) SyncAvailable(id string) error {
 			if err := paths.CheckSyncable(v.Path); err != nil {
 				return err
 			}
-			return a.share(ctx, c, v.ID, cmpOr(v.Label, v.ID), v.Path, false)
+			if err := a.share(ctx, c, v.ID, cmpOr(v.Label, v.ID), v.Path, false); err != nil {
+				return err
+			}
+			meta.DoneWaiting(v.ID)
+			return nil
 		}
 	}
 	return errors.New("that game is no longer offered by your other PCs")
@@ -967,7 +1024,7 @@ func (a *App) RemoveUninstalled() (int, error) {
 		}
 		cleanMarkers(f.Path)
 		if paths.ValidID(f.ID) {
-			_ = forgetBackup(f.ID, false) // its backup stays; this PC's bookkeeping goes
+			_, _ = forgetBackup(f.ID, false) // its backup stays; this PC's bookkeeping goes
 		}
 		n++
 	}

@@ -310,6 +310,7 @@ func backupFolders() ([]backup.Folder, error) {
 	for i := range fs {
 		fs[i].Exclude = s.Exclude[dismissKey(fs[i].Path)]
 		fs[i].From = cmpOr(st.BackupFrom[fs[i].ID], st.HistoryCopies[fs[i].ID])
+		fs[i].Mod = programsAllowed(s, fs[i].ID)
 		if modKind(s, fs[i].ID) == mods.KindDeployed {
 			// Only the mod files: the folder is the game's own.
 			fs[i].Scoped, fs[i].Only = true, deployedFiles(s, fs[i].ID)

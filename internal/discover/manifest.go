@@ -62,6 +62,24 @@ func CachedManifest() []Entry {
 	return cached
 }
 
+// SetManifestForTest makes CachedManifest return es (none if empty) until
+// the returned func is called. Only for tests of code that depends on the
+// game database.
+func SetManifestForTest(es []Entry) (restore func()) {
+	if es == nil {
+		es = []Entry{}
+	}
+	cacheMu.Lock()
+	old := cached
+	cached = es
+	cacheMu.Unlock()
+	return func() {
+		cacheMu.Lock()
+		cached = old
+		cacheMu.Unlock()
+	}
+}
+
 // Manifest returns the parsed manifest index, downloading or refreshing it when
 // needed. A stale cache is used if the network is unavailable.
 func Manifest(forceRefresh bool) ([]Entry, error) {

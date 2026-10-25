@@ -44,7 +44,7 @@
   $effect(() => { if (ui.view === 'mods' && ui.overview && !modsPageOn(ui.overview)) ui.view = 'games' })
 
   const o = $derived(ui.overview)
-  const badge = $derived<Partial<Record<View, number>>>({ devices: o?.pending ?? 0 })
+  const badge = $derived<Partial<Record<View, number>>>({ devices: o?.pending ?? 0, games: o?.waiting?.length ?? 0 })
   const health = $derived.by((): { kind: string; text: string; tip?: string } => {
     if (!o) return { kind: '', text: 'Loading…' }
     if (o.paused) return { kind: 'warn', text: `Paused until ${pausedUntil(o.settings.pausedUntil)}` }

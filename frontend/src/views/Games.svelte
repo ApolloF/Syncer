@@ -11,6 +11,9 @@
     modsFound: null as app.GameView[] | null,
     shares: [] as app.VortexShareView[],
   })
+
+  /** Opens Games on Elsewhere, where folders from other PCs wait. */
+  export function showElsewhere() { cache.tab = 'other' }
 </script>
 
 <script lang="ts">
@@ -23,8 +26,8 @@
   import RestoreDialog from '../lib/RestoreDialog.svelte'
   import { ui, attempt, fail, refresh, toast, accountName, accountColor } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
-  import { isTime, plural, backupLine, stateOf } from '../lib/folders'
-  import { conflictBadge, conflictPCs as pcsOf } from '../lib/conflicts'
+  import { isTime, plural, backupLine, stateOf, waitReason, sameName } from '../lib/folders'
+  import { conflictBadge, conflictPCs as pcsOf, currentLabel, otherLabel } from '../lib/conflicts'
   import { byModKind, modGameName, modPhase } from '../lib/mods'
   import { modsAvailable, modsPageOn } from '../lib/features'
   import {
@@ -53,6 +56,7 @@
   let restoreFor = $state<app.FolderView | null>(null)
   let removeFor = $state<app.FolderView | null>(null)
   let deleteBackupToo = $state(false)
+  let removeTyped = $state('')
   let custom = $state<{ path: string; name: string } | null>(null)
   let conflictsFor = $state<app.FolderView | null>(null)
   let conflicts = $state<conflict.Conflict[]>([])
@@ -479,6 +483,7 @@
   function openRemove(f: app.FolderView) {
     removeFor = f
     deleteBackupToo = false
+    removeTyped = ''
   }
 
   async function doRemove() {
@@ -486,7 +491,9 @@
     const f = removeFor
     const del = deleteBackupToo
     removeFor = null
-    if (await attempt(() => RemoveFolder(f.id, del), `Removed ${f.label} from Syncer`)) {
+    let note = ''
+    if (await attempt(async () => { note = await RemoveFolder(f.id, del) })) {
+      toast(note ? `Removed ${f.label} from Syncer · ${note}` : `Removed ${f.label} from Syncer`, 'ok')
       cache.found = null
       load(); refresh()
     }
@@ -500,7 +507,6 @@
     deleteAck = false
   }
 
-  const sameName = (typed: string, name: string) => typed.trim().toLowerCase() === name.trim().toLowerCase()
   const deleteUnbacked = $derived(!!deleteFor && (!deleteFor.backup || !o?.target))
   const canDelete = $derived(!!deleteFor && sameName(deleteTyped, deleteFor.label) && (!deleteUnbacked || deleteAck))
 
@@ -853,6 +859,7 @@
     <div class="grow">
       <div class="name ellipsis" title={a.label}>{a.label}</div>
       <div class="path faint ellipsis" title={a.path}>{a.path}</div>
+      {#if a.reason === 'ask'}{@const why = waitReason(a, o?.settings.autoAddMaxGB)}<div class="path faint ellipsis" title={why}>{why}</div>{/if}
     </div>
     <span class="meta faint">from {a.from}</span>
     {#if a.reason === 'not-installed'}<span class="pill warn">Not installed</span>
@@ -863,6 +870,7 @@
     {:else if a.reason === 'link'}<span class="pill warn" title="On this PC this folder is reached through a link (a junction or symbolic link) to another place. Syncer only syncs folders where they really are.">Linked folder here</span>
     {:else if a.reason === 'copy'}<span class="pill" title="An emulator's copy of saves the game also keeps in its own save folder, so it isn't added here on its own.">Copy of saves</span>
     {:else if a.reason === 'pending'}<span class="pill" title="Nothing stops it from syncing here; it starts once syncing runs (it may be paused).">Not synced yet</span>
+    {:else if a.reason === 'ask'}<span class="pill warn" title="Sync it here only if you know what it is.">Waiting for your OK</span>
     {:else if a.reason === 'mods-off'}<span class="pill" title="Turn on “Find installed mods” in Settings to sync mod folders on this PC.">Mods off here</span>
     {:else if a.reason === 'mods-experimental-off'}<span class="pill" title="Turn on “Sync deployed mods in the game folder” in Settings to receive deployed mods on this PC.">Experimental option off</span>
     {:else if a.reason === 'mod-game-missing'}<span class="pill warn" title="Vortex on this PC doesn't manage this game yet. Add the game in Vortex here (with its default or your own mods folder), then it can sync.">Not in Vortex here</span>
@@ -1146,12 +1154,12 @@
           <div class="mono ellipsis" title={c.rel}>{c.rel}</div>
           <div class="versions">
             <div class="ver">
-              <div class="faint small">Current{c.missing ? ' (deleted)' : ''}{c.currentName && !c.missing ? ` · from ${c.currentName}` : ''}</div>
+              <div class="faint small">{currentLabel(c)}</div>
               <div>{c.missing ? '—' : `${when(Date.parse(c.modified) / 1000)} · ${bytes(c.size)}`}</div>
               <button class="btn sm" disabled={!!resolving} onclick={() => resolve(c, false)}>Keep current</button>
             </div>
             <div class="ver">
-              <div class="faint small">Other version{c.deviceName ? ` · from ${c.deviceName}` : ''}</div>
+              <div class="faint small">{otherLabel(c)}</div>
               <div>{when(Date.parse(c.copyModified) / 1000)} · {bytes(c.copySize)}</div>
               <button class="btn sm primary" disabled={!!resolving} onclick={() => resolve(c, true)}>
                 {#if resolving === c.copy}<Icon name="refresh" size={14} class="spin" />{/if} Use this one
@@ -1191,13 +1199,19 @@
     <p>Syncer stops syncing and backing up this folder on this PC and removes its sync markers. Your save files stay where they are; your other PCs keep their copy.</p>
     {#if removeInner.length}<p class="small">{names(removeInner)} keep{removeInner.length === 1 ? 's' : ''} syncing through {removeInner.length === 1 ? 'its own save folder' : 'their own save folders'}.</p>{/if}
     <label class="chk"><input type="checkbox" bind:checked={deleteBackupToo} /> Also delete its backup and history</label>
-    {#if deleteBackupToo}<p class="err small">This can't be undone from Syncer.</p>{/if}
+    {#if deleteBackupToo}
+      <p class="err small">This can't be undone from Syncer.</p>
+      <label class="confirm">
+        <span>Type <b>{f.label}</b> to confirm</span>
+        <input type="text" bind:value={removeTyped} spellcheck="false" autocomplete="off" />
+      </label>
+    {/if}
     {#if f.exists && !removeInner.length}
       <p class="small">Want the save files on this PC gone instead? <button class="linkbtn danger" onclick={() => openDelete(f)}>Delete the save files…</button></p>
     {/if}
     {#snippet actions()}
       <button class="btn" onclick={() => (removeFor = null)}>Cancel</button>
-      <button class="btn primary" onclick={doRemove}>Remove</button>
+      <button class="btn primary" disabled={deleteBackupToo && !sameName(removeTyped, f.label)} onclick={doRemove}>Remove</button>
     {/snippet}
   </Modal>
 {/if}

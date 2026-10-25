@@ -20,7 +20,7 @@ import (
 // from the mirror or from the versions taken when they are later replaced.
 // It returns how many files were saved.
 func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
-	m := LoadMatcher(f.Path, f.Exclude...)
+	m := f.Matcher()
 	sc := f.scope()
 	mirror := filepath.Join(target, f.ID)
 	var rels []string
@@ -98,7 +98,12 @@ func Snapshot(ctx context.Context, target string, f Folder) (int, error) {
 // which would otherwise be thinning the same history, and returns ErrBusy
 // after that. It returns where the file was put.
 func Keep(target, id, src, rel string, move bool) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), keepWait)
+	return KeepWithin(keepWait, target, id, src, rel, move)
+}
+
+// KeepWithin is Keep with its own limit for the wait.
+func KeepWithin(wait time.Duration, target, id, src, rel string, move bool) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	unlock, err := waitLock(ctx)
 	if err != nil {
@@ -161,6 +166,15 @@ func newAsidePoint(target, id string) (string, time.Time) {
 	pin(target, id, t)
 	markStamp(target, id, AsideDir, t.Format(stampFmt))
 	return dir, t
+}
+
+// dropPoint removes a point newAsidePoint made, and its marks, when nothing
+// came of it.
+func dropPoint(target, id, stamp string) {
+	root := filepath.Join(target, VersionsDir, id)
+	_ = os.RemoveAll(filepath.Join(root, stamp))
+	_ = os.Remove(filepath.Join(root, PinnedDir, stamp))
+	_ = os.Remove(filepath.Join(root, AsideDir, stamp))
 }
 
 // keepWait is how long Keep waits for a running backup.

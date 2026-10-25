@@ -8,6 +8,7 @@ package meta
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,6 +85,27 @@ type DeviceFile struct {
 	Accounts *accounts.Shared `json:"accounts,omitempty"`
 	// Mods: this PC's mod options (see ModSettings).
 	Mods *ModSettings `json:"mods,omitempty"`
+	// PCs are the Syncer PCs this one is linked to, for the others to offer
+	// them to the user. On their own they never make a PC trusted: one a
+	// trusted PC lists is linked without asking only when its own file lists
+	// this PC too, as its user allowed this one there (see allowVouched).
+	PCs []PCRef `json:"pcs,omitempty"`
+	// Unlinked are the PCs this one just unlinked, so each of them drops
+	// the link too.
+	Unlinked []UnlinkNote `json:"unlinked,omitempty"`
+}
+
+// PCRef is a linked PC as another PC names it.
+type PCRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// UnlinkNote tells PC ID that the publishing PC unlinked it at At (unix
+// seconds by the publishing PC's clock).
+type UnlinkNote struct {
+	ID string `json:"id"`
+	At int64  `json:"at"`
 }
 
 // Dir is the local path of the meta folder.
@@ -113,7 +135,28 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	asked, unsure := map[string]bool{}, map[string]bool{}
+	checkWriters(ctx, c, me, asked, unsure)
+	devices = dropUnlinkers(ctx, c, me, devices)
 	pcs := syncerPCs(ctx, c, me, devices)
+	checkWriters(ctx, c, me, asked, unsure) // the PCs just trusted
+	// A PC that can still add devices here gets nothing this round.
+	early, err := c.AllFolders(ctx)
+	if err != nil {
+		return rep, err
+	}
+	for id := range noIntroducers(ctx, c, devices, pcs, early, store.LoadState().SyncerFolders) {
+		delete(pcs, id)
+	}
+	noteIntroductions(me, devices, unsure)
+	if ids := allowVouched(ctx, c, me, devices); len(ids) > 0 {
+		for _, id := range ids {
+			pcs[id] = true
+		}
+		if ds, err := c.AllDevices(ctx); err == nil {
+			devices = ds
+		}
+	}
 	others := slices.Sorted(maps.Keys(pcs))
 
 	// Take in the accounts and split games other PCs published, and carry
@@ -174,12 +217,14 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		byID[FolderID] = syncthing.Folder{ID: FolderID, Path: Dir(), Devices: toFD(devList(me, others))}
 	}
 
-	// Publish our own folder list.
-	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature},
-		Version: AppVersion, Rejected: rejectedHere(),
+	// Publish our own folder list. An unlink notice published meanwhile
+	// must not be written over (see publishUnlink).
+	ownFile.Lock()
+	pruneUnlinking()
+	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature, PCsFeature},
+		Version: AppVersion, Rejected: rejectedHere(), PCs: linkedPCs(devices, others), Unlinked: unlinkingNow(),
 		Folders: publishable(folders, settings, ast, me, func(id string) int64 {
-			st, _ := c.FolderStatus(ctx, id)
-			return st.GlobalBytes
+			return folderSize(ctx, c, id)
 		})}
 	rememberModSizes(settings, mine.Folders)
 	if features.Mods { // a build without mods publishes none: PCs read a missing entry as "not shared"
@@ -199,6 +244,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			logx.Printf("meta: write own file: %v", err)
 		}
 	}
+	ownFile.Unlock()
 
 	// Adopt folders other PCs have. The most specific paths go first: when
 	// one folder holds another (an old whole-vendor folder around a game's own
@@ -250,6 +296,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		}
 		byID[sf.ID] = syncthing.Folder{ID: sf.ID, Label: sf.Label, Path: p, Devices: toFD(devList(me, others)),
 			Versioning: syncthing.Versioning{Type: "staggered"}, MaxConflicts: -1}
+		all = append(all, byID[sf.ID])
 		allIDs[sf.ID] = true
 		synced = append(synced, p)
 		rep.Added = append(rep.Added, sf.Label)
@@ -263,6 +310,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		}
 		byID[add.id] = syncthing.Folder{ID: add.id, Label: add.label, Path: add.path, Devices: toFD(devList(me, others)),
 			Versioning: syncthing.Versioning{Type: "staggered"}}
+		all = append(all, byID[add.id])
 		allIDs[add.id] = true
 		synced = append(synced, add.path)
 		rep.Added = append(rep.Added, add.label)
@@ -270,6 +318,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	}
 
 	quietOffers(ctx, c, pcs, skipped, allIDs)
+	noteWaiting(available(me, all, settings, installed))
 
 	// Every folder is shared with every paired PC, has versioning on and
 	// keeps every conflict copy, except a PC receiving deployed mods: it
@@ -316,7 +365,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 // are published by their portable path (an account's saves of a split game
 // at the game's save folder); mod folders by their mod root,
 // which each PC resolves with its own mod manager. size returns a folder's
-// size in bytes (asked for mod folders only).
+// size in bytes.
 func publishable(folders []syncthing.Folder, s store.Settings, ast accounts.State, me string, size func(id string) int64) []SharedFolder {
 	var out []SharedFolder
 	for _, f := range folders {
@@ -342,7 +391,7 @@ func publishable(folders []syncthing.Folder, s store.Settings, ast accounts.Stat
 			}
 			sf := SharedFolder{ID: f.ID, Label: f.Label, Root: mf.Root, Rel: mf.Rel, Kind: mf.Kind, ModGame: mf.Game}
 			if b := size(f.ID); b > 0 {
-				sf.SizeGB = int((b + 1<<30 - 1) >> 30)
+				sf.SizeGB = sizeGB(b)
 			} else {
 				sf.SizeGB = s.Mods[f.ID].SizeGB // paused (Vortex open): keep the last size known
 			}
@@ -358,11 +407,52 @@ func publishable(folders []syncthing.Folder, s store.Settings, ast accounts.Stat
 				continue
 			}
 			out = append(out, SharedFolder{ID: f.ID, Label: f.Label, Root: root, Rel: rel,
-				CopyOf: classify(f.Label, f.Path).CopyOf})
+				CopyOf: classify(f.Label, f.Path).CopyOf, SizeGB: sizeGB(size(f.ID))})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+var sizes struct {
+	sync.Mutex
+	m map[string]sizeAt
+}
+
+type sizeAt struct {
+	b  int64
+	at time.Time
+}
+
+// folderSize is a folder's size in bytes as Syncthing knows it (0 if it
+// can't tell), asked again every few minutes only: Syncthing's folder status
+// is costly, and reconcile runs every minute for every folder.
+func folderSize(ctx context.Context, c *syncthing.Client, id string) int64 {
+	sizes.Lock()
+	v, ok := sizes.m[id]
+	sizes.Unlock()
+	if ok && time.Since(v.at) < 10*time.Minute {
+		return v.b
+	}
+	st, err := c.FolderStatus(ctx, id)
+	if err != nil || st.GlobalBytes <= 0 {
+		return 0
+	}
+	sizes.Lock()
+	if sizes.m == nil {
+		sizes.m = map[string]sizeAt{}
+	}
+	sizes.m[id] = sizeAt{st.GlobalBytes, time.Now()}
+	sizes.Unlock()
+	return st.GlobalBytes
+}
+
+// sizeGB is a size in bytes in whole GB, rounded up.
+func sizeGB(b int64) int {
+	if b <= 0 {
+		return 0
+	}
+	return int((b + 1<<30 - 1) >> 30)
 }
 
 // knownLaunchers are the launchers whose own data Syncer syncs, by the
@@ -381,6 +471,9 @@ func KnownLauncher(name string) (string, bool) {
 // data, so this PC doesn't take them for a game's saves before its own
 // launcher asks.
 func markLaunchers(cands []SharedFolder, synced map[string]syncthing.Folder) {
+	if !features.Launchers {
+		return
+	}
 	s := store.LoadSettings()
 	add := map[string]string{}
 	for _, sf := range cands {
@@ -476,6 +569,10 @@ func patchFor(f syncthing.Folder, me string, others []string) map[string]any {
 		sort.Strings(ids[1:])
 		patch["devices"] = devList(ids[0], ids[1:])
 	}
+	if f.ID == FolderID && sharedBeyond(f, me, others) {
+		// Whoever the shared settings reach can write any PC's file in it.
+		patch["devices"] = devList(me, slices.Sorted(slices.Values(others)))
+	}
 	if f.ID != FolderID && f.Versioning.Type == "" {
 		patch["versioning"] = syncthing.StaggeredVersioning()
 	}
@@ -483,6 +580,17 @@ func patchFor(f syncthing.Folder, me string, others []string) map[string]any {
 		patch["maxConflicts"] = -1
 	}
 	return patch
+}
+
+// sharedBeyond reports whether folder f is shared with a device other than
+// me and others.
+func sharedBeyond(f syncthing.Folder, me string, others []string) bool {
+	for _, d := range f.Devices {
+		if d.DeviceID != me && !slices.Contains(others, d.DeviceID) {
+			return true
+		}
+	}
+	return false
 }
 
 // BeforeAdd, when set, prepares a folder's directory just before Syncthing
@@ -504,6 +612,9 @@ const (
 	SkipNoRoot       = "not-here"      // the folder it's in doesn't exist on this PC (no Ubisoft Connect)
 	SkipLink         = "link"          // this PC reaches the folder through a junction or symbolic link
 	SkipLaunchersOff = "launchers-off" // a launcher's own data, and this build has no launcher support
+	// SkipAsk: not one of the game's save folders in the game database, or
+	// bigger than the auto-add limit; it waits for the user's OK.
+	SkipAsk = "ask"
 
 	// Mod folders.
 	SkipModsOff             = "mods-off"              // "Find installed mods" is off here
@@ -522,8 +633,11 @@ const (
 var (
 	inOneDrive = paths.InOneDrive
 	classify   = discover.Classify
-	resolveMod = mods.Resolve
-	checkMod   = mods.CheckModSyncable
+	// knownLocation reports whether a folder is one of the save folders
+	// the game database lists for the game it's named after.
+	knownLocation = discover.KnownLocation
+	resolveMod    = mods.Resolve
+	checkMod      = mods.CheckModSyncable
 	// deploysHere reports whether this PC's own mod manager deploys into
 	// the deployed-mods folder at path.
 	deploysHere = mods.DeploysHere
@@ -577,6 +691,12 @@ func Adoptable(sf SharedFolder, s store.Settings, installed func(label string) b
 		return p, SkipSteamCloud
 	case c.CopyOf != "":
 		return p, SkipCopy
+	}
+	// The other PC names the folder and its place: a list of folders that
+	// must never be synced can't be complete, so only the saves the game
+	// database knows for that game are added without asking.
+	if !knownLocation(sf.Label, p) || s.AutoAddMaxGB > 0 && sf.SizeGB > s.AutoAddMaxGB {
+		return p, SkipAsk
 	}
 	return p, ""
 }
@@ -743,6 +863,9 @@ type Avail struct {
 	Path   string
 	From   string
 	Reason string
+	// UnknownPlace: it waits (SkipAsk) because it isn't one of the game's
+	// save folders in the game database, not (only) because of its size.
+	UnknownPlace bool
 }
 
 // Available lists folders published by other PCs that this PC neither syncs
@@ -756,15 +879,18 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 	if err != nil {
 		return nil, err
 	}
+	return available(st.MyID, folders, store.LoadSettings(), lazyInstalled()), nil
+}
+
+// available is Available for the Syncthing folders this PC (me) has.
+func available(me string, folders []syncthing.Folder, s store.Settings, installed func(string) bool) []Avail {
 	have := map[string]bool{}
 	for _, f := range folders {
 		have[f.ID] = true
 	}
-	s := store.LoadSettings()
-	installed := lazyInstalled()
 	synced := syncedPaths(folders)
 	var out []Avail
-	for _, df := range readOtherFiles(st.MyID) {
+	for _, df := range readOtherFiles(me) {
 		for _, sf := range df.Folders {
 			if have[sf.ID] || sf.Launcher != "" && !features.Launchers ||
 				(sf.Kind != "" || mods.IsModRoot(sf.Root)) && !features.Mods {
@@ -793,7 +919,8 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 					reason = Pending
 				}
 				have[sf.ID] = true
-				out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason})
+				out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason,
+					UnknownPlace: reason == SkipAsk && !knownLocation(sf.Label, p)})
 				continue
 			}
 			p, reason := Adoptable(sf, s, installed, synced)
@@ -804,12 +931,45 @@ func Available(ctx context.Context, c *syncthing.Client) ([]Avail, error) {
 				reason = Pending
 			}
 			have[sf.ID] = true
-			out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason})
+			out = append(out, Avail{SharedFolder: sf, Path: p, From: df.Name, Reason: reason,
+				UnknownPlace: reason == SkipAsk && !knownLocation(sf.Label, p)})
 		}
 	}
 	out = dropOuter(out)
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
-	return out, nil
+	return out
+}
+
+// DoneWaiting drops the folder id from the ones waiting for the user's OK,
+// once the user started syncing it (a reconcile may not run right away).
+func DoneWaiting(id string) {
+	w := store.LoadState().Waiting
+	if !slices.ContainsFunc(w, func(f store.WaitingFolder) bool { return f.ID == id }) {
+		return
+	}
+	if err := store.UpdateState(func(st *store.State) {
+		st.Waiting = slices.DeleteFunc(st.Waiting, func(f store.WaitingFolder) bool { return f.ID == id })
+	}); err != nil {
+		logx.Printf("meta: note waiting folders: %v", err)
+	}
+}
+
+// noteWaiting records the folders from other PCs that wait for the user's
+// OK, for the count in the app. A launcher's own data isn't one: the
+// launcher asks for it itself.
+func noteWaiting(av []Avail) {
+	var w []store.WaitingFolder
+	for _, a := range av {
+		if a.Reason == SkipAsk && a.Launcher == "" {
+			w = append(w, store.WaitingFolder{ID: a.ID, Label: a.Label, From: a.From})
+		}
+	}
+	if slices.Equal(w, store.LoadState().Waiting) {
+		return
+	}
+	if err := store.UpdateState(func(st *store.State) { st.Waiting = w }); err != nil {
+		logx.Printf("meta: note waiting folders: %v", err)
+	}
 }
 
 // dropOuter keeps one folder of each nested group: a folder that holds
@@ -1017,7 +1177,7 @@ func changed(me string, df DeviceFile) bool {
 	om, _ := json.Marshal(old.Mods)
 	nm, _ := json.Marshal(df.Mods)
 	if string(oa) != string(na) || string(om) != string(nm) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") ||
-		!maps.EqualFunc(old.Rejected, df.Rejected, slices.Equal) {
+		!maps.EqualFunc(old.Rejected, df.Rejected, slices.Equal) || !slices.Equal(old.PCs, df.PCs) || !slices.Equal(old.Unlinked, df.Unlinked) {
 		return true
 	}
 	for i := range old.Folders {
@@ -1034,8 +1194,22 @@ const maxDeviceFile = 1 << 20
 // readDeviceFiles parses every PC's published file, skipping oversized or
 // malformed ones: they arrive from other PCs and aren't trusted.
 func readDeviceFiles() []DeviceFile {
-	es, _ := os.ReadDir(Dir())
 	var out []DeviceFile
+	for _, f := range readSummed() {
+		out = append(out, f.DeviceFile)
+	}
+	return out
+}
+
+// summedFile is a PC's published file and the hash of its content.
+type summedFile struct {
+	DeviceFile
+	sum [sha256.Size]byte
+}
+
+func readSummed() []summedFile {
+	es, _ := os.ReadDir(Dir())
+	var out []summedFile
 	for _, e := range es {
 		n := e.Name()
 		if !e.Type().IsRegular() || !strings.HasSuffix(n, ".json") {
@@ -1050,20 +1224,103 @@ func readDeviceFiles() []DeviceFile {
 		}
 		var df DeviceFile
 		if json.Unmarshal(b, &df) == nil && df.Device != "" && df.Device+".json" == n {
-			out = append(out, df)
+			out = append(out, summedFile{df, sha256.Sum256(b)})
 		}
 	}
 	return out
 }
 
+// readOtherFiles are the files of the other PCs trusted here that each PC
+// last wrote itself (see checkWriters). Any device the shared settings
+// reach, and any PC there, can put a file there: one of a device that isn't
+// trusted, or written by another, is left unread.
 func readOtherFiles(me string) []DeviceFile {
+	known := knownPCs()
 	var out []DeviceFile
-	for _, df := range readDeviceFiles() {
-		if df.Device != me {
-			out = append(out, df)
+	for _, f := range readSummed() {
+		if f.Device != me && known[f.Device] && ownWriter(f.Device, f.sum) {
+			out = append(out, f.DeviceFile)
 		}
 	}
 	return out
+}
+
+// writers remembers, per PC, whether it last wrote its own file in the
+// shared settings, for the exact content that was there when Syncthing was
+// asked: a file put back with the same size and time is asked about anew.
+var writers struct {
+	sync.Mutex
+	m map[string]writerCheck
+}
+
+type writerCheck struct {
+	sum [sha256.Size]byte
+	own bool
+}
+
+// fileSum is the hash of PC device's file in the shared settings.
+func fileSum(device string) ([sha256.Size]byte, bool) {
+	p := filepath.Join(Dir(), device+".json")
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() || fi.Size() > maxDeviceFile {
+		return [sha256.Size]byte{}, false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return [sha256.Size]byte{}, false
+	}
+	return sha256.Sum256(b), true
+}
+
+// checkWriters asks Syncthing, once a round for each trusted PC (asked
+// keeps who was asked this round), which device last wrote that PC's file.
+// It notes in unsure the PCs whose file isn't read this round. A file just
+// arrived may not be in Syncthing's index yet: it is asked again next round
+// rather than taken as written by another.
+//
+// This guards against mistakes and relays: a file another PC wrote, or an
+// older Syncer passed on, for a PC. It can't stop a device that lies to
+// Syncthing about who changed a file; the shared settings reach only
+// trusted PCs for that.
+func checkWriters(ctx context.Context, c *syncthing.Client, me string, asked, unsure map[string]bool) {
+	for id := range knownPCs() {
+		if id == me || asked[id] {
+			continue
+		}
+		before, ok := fileSum(id)
+		if !ok {
+			continue
+		}
+		asked[id] = true
+		by, err := c.ModifiedBy(ctx, FolderID, id+".json")
+		after, _ := fileSum(id)
+		if err != nil || by == "" || after != before {
+			writers.Lock()
+			delete(writers.m, id)
+			writers.Unlock()
+			unsure[id] = true
+			continue
+		}
+		w := writerCheck{before, strings.EqualFold(by, shortID(id))}
+		if !w.own {
+			warnOnce("writer:"+id+by, "meta: the file of %s was last written by %s: not read", shortID(id), by)
+			unsure[id] = true
+		}
+		writers.Lock()
+		if writers.m == nil {
+			writers.m = map[string]writerCheck{}
+		}
+		writers.m[id] = w
+		writers.Unlock()
+	}
+}
+
+// ownWriter reports whether PC device's file with content hash sum was
+// found written by that PC.
+func ownWriter(device string, sum [sha256.Size]byte) bool {
+	writers.Lock()
+	defer writers.Unlock()
+	w, seen := writers.m[device]
+	return seen && w.own && w.sum == sum
 }
 
 // readOthers unions the folder lists published by other PCs.
