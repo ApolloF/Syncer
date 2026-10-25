@@ -115,7 +115,7 @@ export function ReleaseModHold(arg1:string):Promise<void>;
 
 export function RemoveDevice(arg1:string):Promise<void>;
 
-export function RemoveFolder(arg1:string,arg2:boolean):Promise<void>;
+export function RemoveFolder(arg1:string,arg2:boolean):Promise<string>;
 
 export function RemoveUninstalled():Promise<number>;
 

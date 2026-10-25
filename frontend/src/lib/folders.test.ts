@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { app } from '../../wailsjs/go/models'
-import { backupLine, isTime, plural, stateOf } from './folders'
+import { backupLine, isTime, plural, sameName, stateOf } from './folders'
 
 const folder = (f: Partial<app.FolderView>) => ({ exists: true, state: 'idle', ...f }) as app.FolderView
 
@@ -9,6 +9,17 @@ describe('isTime', () => {
     expect(isTime('0001-01-01T00:00:00Z')).toBe(false)
     expect(isTime('')).toBe(false)
     expect(isTime('2026-10-01T08:00:00Z')).toBe(true)
+  })
+})
+
+describe('sameName', () => {
+  it('ignores case and outer spaces', () => {
+    expect(sameName('  hollow knight ', 'Hollow Knight')).toBe(true)
+  })
+  it('needs the whole name', () => {
+    expect(sameName('Hollow', 'Hollow Knight')).toBe(false)
+    expect(sameName('', '')).toBe(false)
+    expect(sameName(' ', ' ')).toBe(false)
   })
 })
 

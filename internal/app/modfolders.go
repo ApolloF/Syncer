@@ -286,7 +286,7 @@ func (a *App) resyncMod(ctx context.Context, c *syncthing.Client, id string, lf 
 		_, _ = store.UpdateSettings(func(s *store.Settings) { forgetMod(s, sid) })
 		return err
 	}
-	_ = forgetBackup(id, false) // backups continue under the synced id
+	_, _ = forgetBackup(id, false) // backups continue under the synced id
 	_, err = store.UpdateSettings(func(s *store.Settings) {
 		delete(s.BackupOnly, id)
 		delete(s.NoBackup, id)
