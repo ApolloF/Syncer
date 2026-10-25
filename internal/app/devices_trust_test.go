@@ -1,15 +1,33 @@
 package app
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
 func TestLinkedDeviceGetsAPlainNameWhenNoneIsGiven(t *testing.T) {
 	if d := linkedDevice("ABCDEFG-HIJKLMN", ""); d.Name != "PC ABCDEFG" {
 		t.Errorf("%+v", d)
+	}
+}
+
+func TestALinkedPCIntroducesNoOne(t *testing.T) {
+	if d := linkedDevice("ABCDEFG-HIJKLMN", "Laptop"); d.Introducer || d.AutoAcceptFolders {
+		t.Errorf("%+v", d)
+	}
+}
+
+func TestJoinListNamesWhoALinkedPCIsLinkedTo(t *testing.T) {
+	names := map[string]string{"ASKER": "Asker", "VIA": "SYNCER-A"}
+	intro := map[string]store.Introduced{"THIRDPC": {Name: "SYNCER-C", Via: "VIA"}, "GONEVIA": {Name: "", Via: "OLDPCID1"}}
+	got := joinList([]string{"ASKER", "GONEVIA", "STRANGER", "THIRDPC"}, names, intro)
+	want := []JoinView{{ID: "ASKER", Name: "Asker"}, {ID: "GONEVIA", Name: "GONEVIA", Via: "OLDPCID"}, {ID: "THIRDPC", Name: "SYNCER-C", Via: "SYNCER-A"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
 

@@ -113,7 +113,7 @@ export function PushVortexList(arg1:string):Promise<void>;
 
 export function ReleaseModHold(arg1:string):Promise<void>;
 
-export function RemoveDevice(arg1:string):Promise<void>;
+export function RemoveDevice(arg1:string):Promise<boolean>;
 
 export function RemoveFolder(arg1:string,arg2:boolean):Promise<string>;
 

@@ -210,10 +210,37 @@ type State struct {
 	// are those the user turned down.
 	JoinRequests map[string]bool `json:"joinRequests,omitempty"`
 	IgnoredPCs   map[string]bool `json:"ignoredPCs,omitempty"`
+	// Introduced are PCs a linked Syncer PC is linked to and this one isn't
+	// (by device id). Each only asks: the user allows it here or not.
+	Introduced map[string]Introduced `json:"introduced,omitempty"`
+	// Unlinking are the PCs this one unlinked (device id -> unix seconds),
+	// told to them through the shared settings while the unlink runs.
+	Unlinking map[string]int64 `json:"unlinking,omitempty"`
+	// UnlinkSeen is, per PC, the time of its newest unlink of this PC that
+	// was acted on here, so an old copy of its notice is never acted on
+	// again after the PCs are linked anew.
+	UnlinkSeen map[string]int64 `json:"unlinkSeen,omitempty"`
+	// LinkSince is, per Syncer PC, when (unix seconds by its clock) it last
+	// wrote the first file of it seen here since it was linked: a notice
+	// of an unlink from no later than that is older than the link.
+	LinkSince map[string]int64 `json:"linkSince,omitempty"`
+	// LinkedAt is when (unix seconds, this PC's clock) the user linked or
+	// allowed each Syncer PC, for a notice in the first file of it seen.
+	LinkedAt map[string]int64 `json:"linkedAt,omitempty"`
+	// TrustMigrated: the PCs trusted under the rules of earlier Syncers were
+	// taken over, and Syncthing no longer lets them introduce others.
+	TrustMigrated bool `json:"trustMigrated,omitempty"`
 	// SyncerFolders and OtherFolders are the Syncthing folders (by id)
 	// found to be Syncer's, or something else's (see meta.Reconcile).
 	SyncerFolders map[string]bool `json:"syncerFolders,omitempty"`
 	OtherFolders  map[string]bool `json:"otherFolders,omitempty"`
+}
+
+// Introduced is a PC another Syncer PC is linked to: the name that PC gave
+// it, and that PC's device id.
+type Introduced struct {
+	Name string `json:"name"`
+	Via  string `json:"via"`
 }
 
 // Decision is a choice between two versions of a save file.

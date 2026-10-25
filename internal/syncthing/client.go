@@ -666,6 +666,11 @@ func (c *Client) RemoveDevice(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/rest/config/devices/"+url.PathEscape(id), nil, nil)
 }
 
+// PatchDevice merges fields into an existing device config.
+func (c *Client) PatchDevice(ctx context.Context, id string, patch map[string]any) error {
+	return c.do(ctx, http.MethodPatch, "/rest/config/devices/"+url.PathEscape(id), patch, nil)
+}
+
 // IgnoreFolder stops Syncthing asking about a folder device offers.
 // Syncthing drops the entry by itself once that folder is shared with it.
 func (c *Client) IgnoreFolder(ctx context.Context, device, id, label string) error {
