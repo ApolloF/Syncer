@@ -146,16 +146,16 @@ func MirrorMatches(target, id string, files []FileEntry) bool {
 	return true
 }
 
-// LocalMatchesIndex reports whether f's files are exactly the ones its last
-// backup from this PC saw: nothing changed here since then.
-func LocalMatchesIndex(f Folder) bool {
-	idx := loadIndex(f.ID)
-	if len(idx) == 0 {
-		return false
-	}
+// Live is what a folder held at one moment: the size and modification time
+// (unix nanoseconds) of every file a backup of it looks at, by lowercased
+// slash path.
+type Live map[string]indexEntry
+
+// ReadLive reads what f's folder holds now. A folder that isn't there yet
+// holds nothing.
+func ReadLive(f Folder) (Live, error) {
 	m := f.Matcher()
-	n := 0
-	same := true
+	l := Live{}
 	err := filepath.WalkDir(f.Path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -177,25 +177,70 @@ func LocalMatchesIndex(f Folder) bool {
 		if err != nil {
 			return err
 		}
-		e, ok := idx[strings.ToLower(filepath.ToSlash(rel))]
-		if !ok || e.Size != info.Size() || e.MTime != info.ModTime().UnixNano() {
-			same = false
-			return filepath.SkipAll
-		}
-		n++
+		l[strings.ToLower(filepath.ToSlash(rel))] = indexEntry{Size: info.Size(), MTime: info.ModTime().UnixNano()}
 		return nil
 	})
-	return err == nil && same && n == len(idx)
+	if err != nil {
+		if _, serr := os.Lstat(f.Path); errors.Is(serr, fs.ErrNotExist) {
+			return Live{}, nil
+		}
+		return nil, err
+	}
+	return l, nil
+}
+
+// MatchesIndex reports whether l holds exactly the files the last backup of
+// id from this PC saw: nothing changed here since then.
+func (l Live) MatchesIndex(id string) bool {
+	idx := loadIndex(id)
+	if len(idx) == 0 || len(l) != len(idx) {
+		return false
+	}
+	for k, e := range l {
+		if i, ok := idx[k]; !ok || i.Size != e.Size || i.MTime != e.MTime {
+			return false
+		}
+	}
+	return true
+}
+
+// Same returns an error when f's folder no longer holds what l recorded.
+func (l Live) Same(f Folder) error {
+	if l == nil {
+		return errors.New("the saves here couldn't be read")
+	}
+	now, err := ReadLive(f)
+	if err != nil {
+		return err
+	}
+	for k, e := range now {
+		if o, ok := l[k]; !ok || o.Size != e.Size || o.MTime != e.MTime {
+			return fmt.Errorf("%s changed here meanwhile", k)
+		}
+	}
+	if len(now) != len(l) {
+		return errors.New("a save here was removed meanwhile")
+	}
+	return nil
+}
+
+// LocalMatchesIndex reports whether f's files are exactly the ones its last
+// backup from this PC saw: nothing changed here since then.
+func LocalMatchesIndex(f Folder) bool {
+	l, err := ReadLive(f)
+	return err == nil && l.MatchesIndex(f.ID)
 }
 
 // TakeFiles copies the listed files from the backup of f into f's folder,
 // the saves another PC backed up. Files that already hold the same are left
-// alone, and files not on the list stay. Every file is first copied next to
-// the folder's saves (into Syncthing's .stversions, which nothing syncs or
-// backs up), and only then are they swapped in; if one can't be (the game
-// has it open), the ones swapped already are put back. The caller saves the
-// current files as a restore point first. It returns how many files changed.
-func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) (int, error) {
+// alone, and files not on the list stay. All of it happens under the backup
+// lock, so no backup or restore runs in between. Every file is first copied
+// next to the folder's saves (into Syncthing's .stversions, which nothing
+// syncs or backs up), and every file it replaces into a new pinned restore
+// point; then precondition (nil = none) says whether it may still go ahead,
+// and only then are they swapped in. If one can't be (the game has it open),
+// the ones swapped already are put back. It returns how many files changed.
+func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry, precondition func() error) (int, error) {
 	if !paths.ValidID(f.ID) {
 		return 0, fmt.Errorf("unsupported folder id %q", f.ID)
 	}
@@ -213,7 +258,7 @@ func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) 
 		}
 	}()
 
-	type swap struct{ rel, staged, to, old string }
+	type swap struct{ rel, staged, to, old, kept string }
 	var swaps []swap
 	for i, e := range files {
 		rel := filepath.FromSlash(e.Path)
@@ -242,9 +287,61 @@ func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) 
 	if ctx.Err() != nil {
 		return 0, ctx.Err()
 	}
-	if len(swaps) > 0 {
-		_ = os.MkdirAll(filepath.Join(stage, "old"), 0o755)
+	if len(swaps) == 0 {
+		return 0, nil
 	}
+
+	// The restore point is made once something goes into it, and dropped
+	// again when the take doesn't happen after all.
+	var point, stamp string
+	keepPoint := false
+	org := newOrigins(f.ID, f.Solo)
+	defer func() {
+		switch {
+		case point == "":
+		case keepPoint || keepStage:
+			org.save(target, stamp)
+		default:
+			dropPoint(target, f.ID, stamp)
+		}
+	}()
+	keepIn := func(rel string) string {
+		if point == "" {
+			var t time.Time
+			point, t = newAsidePoint(target, f.ID)
+			stamp = t.Format(stampFmt)
+		}
+		org.add(org.lookup(filepath.FromSlash(rel)))
+		return filepath.Join(point, filepath.FromSlash(rel))
+	}
+	// Copied, not moved, and flushed: the point is under the backup folder,
+	// maybe on another drive, and an original must be safe there before it
+	// leaves its place.
+	for i := range swaps {
+		s := &swaps[i]
+		fi, err := os.Stat(s.to)
+		if err != nil {
+			continue // new here: nothing to keep
+		}
+		if fi.IsDir() {
+			return 0, fmt.Errorf("%s is a folder here", s.rel)
+		}
+		s.kept = keepIn(s.rel)
+		if err := os.MkdirAll(filepath.Dir(s.kept), 0o755); err != nil {
+			return 0, err
+		}
+		if err := copyFile(s.to, s.kept); err != nil {
+			return 0, fmt.Errorf("could not keep %s first: %w", s.rel, err)
+		}
+		_ = os.Chtimes(s.kept, fi.ModTime(), fi.ModTime())
+	}
+	if precondition != nil {
+		if err := precondition(); err != nil {
+			return 0, err
+		}
+	}
+
+	_ = os.MkdirAll(filepath.Join(stage, "old"), 0o755)
 	var done []swap
 	undo := func() {
 		for i := len(done) - 1; i >= 0; i-- {
@@ -259,7 +356,7 @@ func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) 
 			}
 		}
 		if keepStage {
-			logx.Printf("taking saves for %s failed and some originals couldn't be put back; they're in %s", f.Label, filepath.Join(stage, "old"))
+			logx.Printf("taking saves for %s failed and some originals couldn't be put back; they're in %s and in the restore point %s", f.Label, filepath.Join(stage, "old"), stamp)
 		}
 	}
 	for _, s := range swaps {
@@ -280,6 +377,23 @@ func TakeFiles(ctx context.Context, target string, f Folder, files []FileEntry) 
 			return 0, fmt.Errorf("%s: %w", s.rel, err)
 		}
 		done = append(done, s)
+	}
+	keepPoint = true
+	for _, s := range done {
+		if _, err := os.Stat(s.old); err != nil {
+			continue
+		}
+		if s.kept != "" {
+			if same, err := fsx.SameContent(s.old, s.kept); err == nil && same {
+				continue
+			}
+		}
+		// Written after it was kept (or there only since): what was replaced
+		// goes into the point as well, ahead of the earlier copy.
+		if err := moveTo(s.old, keepIn(s.rel)); err != nil {
+			keepStage = true
+			logx.Printf("taking saves for %s: could not keep the replaced %s, it's in %s: %v", f.Label, s.rel, filepath.Join(stage, "old"), err)
+		}
 	}
 	return len(done), nil
 }

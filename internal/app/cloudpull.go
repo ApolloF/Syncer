@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -92,10 +91,10 @@ func pullNewer(ctx context.Context, playing func() bool) (left map[string]newerS
 		if !ok {
 			continue
 		}
-		chk, files := gatherPull(ctx, c, target, f, in, s, playing)
+		chk, files, live := gatherPull(ctx, c, target, f, in, s, playing)
 		auto, canGet, why := pullVerdict(chk)
 		if auto {
-			k, err := takeNewer(ctx, c, target, f, in, files)
+			k, err := takeNewer(ctx, c, target, f, files, live, playing)
 			if err == nil {
 				logx.Printf("took the newer save of %s (%d file(s)) from %s's backup", f.Label, k, n.Host)
 				took = append(took, f.Label)
@@ -110,8 +109,9 @@ func pullNewer(ctx context.Context, playing func() bool) (left map[string]newerS
 	return left, took
 }
 
-// gatherPull collects what pullVerdict needs about f and the newer save in.
-func gatherPull(ctx context.Context, c *syncthing.Client, target string, f backup.Folder, in backup.Info, s store.Settings, playing func() bool) (pullCheck, []backup.FileEntry) {
+// gatherPull collects what pullVerdict needs about f and the newer save in,
+// the files of that save, and what f's folder holds (nil when not read).
+func gatherPull(ctx context.Context, c *syncthing.Client, target string, f backup.Folder, in backup.Info, s store.Settings, playing func() bool) (pullCheck, []backup.FileEntry, backup.Live) {
 	chk := pullCheck{Auto: !s.NoCloudPull, Paused: s.Paused(), Conflicts: conflict.Count(f.Path)}
 	files, err := backup.ReadFiles(target, in)
 	chk.Ready = err == nil && backup.MirrorMatches(target, f.ID, files)
@@ -132,18 +132,26 @@ func gatherPull(ctx context.Context, c *syncthing.Client, target string, f backu
 	if chk.Ready && !chk.Online && !chk.Incoming {
 		// Only worth the disk reads when nothing else already says no.
 		chk.Playing = playing()
-		chk.Changed = !backup.LocalMatchesIndex(f)
+		var live backup.Live
+		live, err = backup.ReadLive(f)
+		chk.Changed = err != nil || !live.MatchesIndex(f.ID)
+		return chk, files, live
 	}
-	return chk, files
+	return chk, files, nil
 }
 
-// takeNewer keeps the saves here as a restore point, then takes the files of
-// another PC's backup. Syncthing passes them on to the other PCs.
-func takeNewer(ctx context.Context, c *syncthing.Client, target string, f backup.Folder, in backup.Info, files []backup.FileEntry) (int, error) {
-	if _, err := backup.Snapshot(ctx, target, f); err != nil {
-		return 0, fmt.Errorf("could not keep the saves here first: %w", err)
-	}
-	n, err := backup.TakeFiles(ctx, target, f, files)
+// takeNewer takes the files of another PC's backup, keeping the saves they
+// replace as a restore point. It goes ahead only while no game runs and the
+// saves here are still what gatherPull found (live): a save written since
+// would otherwise be replaced without the user having seen why. Syncthing
+// passes the files on to the other PCs.
+func takeNewer(ctx context.Context, c *syncthing.Client, target string, f backup.Folder, files []backup.FileEntry, live backup.Live, playing func() bool) (int, error) {
+	n, err := backup.TakeFiles(ctx, target, f, files, func() error {
+		if playing() {
+			return errors.New("a game is running")
+		}
+		return live.Same(f)
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -179,11 +187,11 @@ func (a *App) getNewer(ctx context.Context, id string) (int, error) {
 		return 0, errors.New("no newer save on another PC")
 	}
 	c, _ := syncthing.New()
-	chk, files := gatherPull(ctx, c, target, f, in, s, a.gameRunning)
+	chk, files, live := gatherPull(ctx, c, target, f, in, s, a.gameRunning)
 	if _, canGet, why := pullVerdict(chk); !canGet {
 		return 0, errors.New("can't take it now: " + why)
 	}
-	k, err := takeNewer(ctx, c, target, f, in, files)
+	k, err := takeNewer(ctx, c, target, f, files, live, a.gameRunning)
 	if err != nil {
 		return 0, err
 	}
