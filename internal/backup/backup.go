@@ -592,9 +592,36 @@ func Lock() (unlock func(), err error) { return lock() }
 
 // Forget drops Syncer's local bookkeeping for a folder (and this PC's info
 // file next to its backup) and, with deleteBackup, its backup copy, version
-// history and info files under target. The caller must hold Lock, so a
-// running backup can't recreate what was deleted.
-func Forget(target, id string, deleteBackup bool) error {
+// history and info files under target. If another PC still has an info file
+// for the folder, only this PC's info goes and that PC's name is returned: the
+// backup is shared and still theirs. The caller must hold Lock, so a running
+// backup can't recreate what was deleted.
+func Forget(target, id string, deleteBackup bool) (stillBackedUpBy string, err error) {
+	if deleteBackup && paths.ValidID(id) {
+		stillBackedUpBy = otherPC(target, id)
+	}
+	return stillBackedUpBy, forget(target, id, deleteBackup && stillBackedUpBy == "")
+}
+
+// ForgetEverywhere is Forget with deleteBackup for every PC's data, for
+// deleting a backup the user picked by name.
+func ForgetEverywhere(target, id string) error { return forget(target, id, true) }
+
+// otherPC names a PC other than this one that backs folder id up, or "".
+func otherPC(target, id string) string {
+	for _, in := range ReadInfos(target, id) {
+		if in.Mine() {
+			continue
+		}
+		if in.Host != "" {
+			return in.Host
+		}
+		return in.key
+	}
+	return ""
+}
+
+func forget(target, id string, deleteBackup bool) error {
 	if !paths.ValidID(id) {
 		return fmt.Errorf("unsupported folder id %q", id)
 	}

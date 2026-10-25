@@ -246,7 +246,7 @@ func TestCancelledRunKeepsBackup(t *testing.T) {
 
 func TestForget(t *testing.T) {
 	target := t.TempDir()
-	if err := Forget(target, "..", true); err == nil {
+	if _, err := Forget(target, "..", true); err == nil {
 		t.Fatal("Forget accepted ..")
 	}
 	id := "forget-" + time.Now().Format("150405")
@@ -257,8 +257,8 @@ func TestForget(t *testing.T) {
 	old := Forgotten
 	Forgotten = func(tg, id string) { told = append(told, tg+"|"+id) }
 	defer func() { Forgotten = old }()
-	if err := Forget(target, id, true); err != nil {
-		t.Fatal(err)
+	if other, err := Forget(target, id, true); err != nil || other != "" {
+		t.Fatalf("Forget = %q, %v", other, err)
 	}
 	if len(told) != 1 || told[0] != target+"|"+id {
 		t.Errorf("Forgotten told %v", told)
@@ -271,6 +271,40 @@ func TestForget(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(target, "other", "b.sav")); err != nil {
 		t.Error("unrelated backup deleted")
+	}
+}
+
+func TestForgetKeepsBackupAnotherPCUses(t *testing.T) {
+	target := t.TempDir()
+	id := "shared-game"
+	write(t, filepath.Join(target, id, "a.sav"), "a")
+	write(t, filepath.Join(target, VersionsDir, id, "x", "a.sav"), "a")
+	write(t, infoPath(target, id, hostKey), `{"id":"shared-game","label":"Shared","host":"ME"}`)
+	write(t, filesPath(target, id, hostKey), `{}`)
+	write(t, infoPath(target, id, "other-pc"), `{"id":"shared-game","label":"Shared","host":"SYNCER-B"}`)
+	write(t, filesPath(target, id, "other-pc"), `{}`)
+
+	other, err := Forget(target, id, true)
+	if err != nil || other != "SYNCER-B" {
+		t.Fatalf("Forget = %q, %v", other, err)
+	}
+	for _, p := range []string{filepath.Join(target, id, "a.sav"), filepath.Join(target, VersionsDir, id, "x", "a.sav"),
+		infoPath(target, id, "other-pc"), filesPath(target, id, "other-pc")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s was deleted", p)
+		}
+	}
+	for _, p := range []string{infoPath(target, id, hostKey), filesPath(target, id, hostKey)} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("own %s left behind", p)
+		}
+	}
+
+	if err := ForgetEverywhere(target, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, id)); err == nil {
+		t.Error("ForgetEverywhere left the backup")
 	}
 }
 
