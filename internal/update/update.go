@@ -26,7 +26,10 @@ const ReleasesURL = "https://github.com/ApolloF/syncer/releases/"
 
 const (
 	assetName = "Syncer.exe"
+	sumsName  = "SHA256SUMS.txt"
+	sigName   = sumsName + ".sig"
 	maxSize   = 200 << 20
+	maxSmall  = 64 << 10 // the sums and signature files are tiny
 )
 
 // Variables for tests.
@@ -42,16 +45,18 @@ var (
 
 // Release is a published Syncer release.
 type Release struct {
-	Tag string // e.g. "v0.7.0"
-	URL string // release page
-	Exe *Asset // the release's Syncer.exe; nil when it has none (or no checksum)
+	Tag  string // e.g. "v0.7.0"
+	URL  string // release page
+	Exe  *Asset // the release's Syncer.exe; nil when it has none
+	Sums *Asset // SHA256SUMS.txt, which the signature covers; nil when missing
+	Sig  *Asset // SHA256SUMS.txt.sig; nil when missing (the release is unsigned)
 }
 
 // Asset is a file attached to a release.
 type Asset struct {
 	URL    string
 	Size   int64
-	SHA256 string // hex, from GitHub's digest of the upload
+	SHA256 string // hex, from GitHub's digest of the upload; an extra check only, the signed sums decide
 }
 
 // Variables for tests.
@@ -146,14 +151,25 @@ func decodeRelease(body io.Reader) (Release, error) {
 	}
 	rel := Release{Tag: r.Tag, URL: page}
 	for _, a := range r.Assets {
-		sum, ok := strings.CutPrefix(a.Digest, "sha256:")
-		if a.Name != assetName || !strings.HasPrefix(a.URL, downloadURL) || a.Size <= 0 || a.Size > maxSize || !ok {
+		if !strings.HasPrefix(a.URL, downloadURL+r.Tag+"/") || a.Size <= 0 || a.Size > maxSize {
 			continue
 		}
-		if b, err := hex.DecodeString(sum); err != nil || len(b) != sha256.Size {
-			continue
+		asset := &Asset{URL: a.URL, Size: a.Size}
+		switch a.Name {
+		case assetName:
+			// GitHub's digest is optional: the signed sums are what counts.
+			if sum, ok := strings.CutPrefix(a.Digest, "sha256:"); ok {
+				if b, err := hex.DecodeString(sum); err != nil || len(b) != sha256.Size {
+					continue
+				}
+				asset.SHA256 = strings.ToLower(sum)
+			}
+			rel.Exe = asset
+		case sumsName:
+			rel.Sums = asset
+		case sigName:
+			rel.Sig = asset
 		}
-		rel.Exe = &Asset{URL: a.URL, Size: a.Size, SHA256: strings.ToLower(sum)}
 	}
 	return rel, nil
 }
@@ -163,31 +179,56 @@ func decodeRelease(body io.Reader) (Release, error) {
 // updating it would silently drop them. It is rebuilt from source instead.
 var ErrPersonalBuild = errors.New("this is the personal build: rebuild it from the source to update (wails build -tags personal)")
 
-// Download fetches a into dir (next to the exe it replaces, so the swap is a
-// rename on one volume) and checks it against its checksum. It returns the
-// downloaded file.
-func Download(ctx context.Context, a *Asset, dir string) (string, error) {
+// Download fetches the release's Syncer.exe into dir (next to the exe it
+// replaces, so the swap is a rename on one volume) and returns the file. The
+// exe must be one the release's signed SHA256SUMS.txt names; a release
+// without a valid signature, or whose exe doesn't match, fails with
+// ErrNotSigned and leaves nothing behind. The release must be newer than
+// current, and all its files must sit under its own tag's download folder.
+func Download(ctx context.Context, r Release, current, dir string) (string, error) {
 	if personal {
 		return "", ErrPersonalBuild
 	}
+	a := r.Exe
 	if a == nil || !strings.HasPrefix(a.URL, downloadURL) {
 		return "", errors.New("the release has no Syncer.exe to update from")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
+	if !Newer(r.Tag, current) {
+		return "", errors.New("this is already the newest version")
+	}
+	if r.Sums == nil || r.Sig == nil {
+		return "", notSigned("the release has no signature")
+	}
+	for _, f := range []*Asset{a, r.Sums, r.Sig} {
+		if !strings.HasPrefix(f.URL, downloadURL+r.Tag+"/") {
+			return "", notSigned("the files aren't all from release " + r.Tag)
+		}
+	}
+	key := embeddedKey
+	sums, err := fetchSmall(ctx, r.Sums)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Syncer")
-	resp, err := http.DefaultClient.Do(req)
+	sig, err := fetchSmall(ctx, r.Sig)
+	if err != nil {
+		return "", err
+	}
+	hashes, err := Verify(r.Tag, sums, sig, key)
+	if err != nil {
+		return "", err
+	}
+	want, ok := hashes[assetName]
+	if !ok {
+		return "", notSigned(assetName + " isn't in the signed checksums")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	resp, err := get(ctx, a.URL)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", errors.New("GitHub answered " + resp.Status)
-	}
 	path := filepath.Join(dir, newName)
 	f, err := os.Create(path)
 	if err != nil {
@@ -201,14 +242,53 @@ func Download(ctx context.Context, a *Asset, dir string) (string, error) {
 	if err == nil && n != a.Size {
 		err = errors.New("the download is incomplete")
 	}
-	if err == nil && hex.EncodeToString(h.Sum(nil)) != a.SHA256 {
-		err = errors.New("the download doesn't match the release's checksum")
+	if err == nil && ([sha256.Size]byte)(h.Sum(nil)) != want {
+		err = notSigned("the download isn't the signed file")
+	}
+	if err == nil && a.SHA256 != "" && hex.EncodeToString(h.Sum(nil)) != a.SHA256 {
+		err = notSigned("the download doesn't match GitHub's checksum")
 	}
 	if err != nil {
 		_ = os.Remove(path)
 		return "", err
 	}
 	return path, nil
+}
+
+func get(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Syncer")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, errors.New("GitHub answered " + resp.Status)
+	}
+	return resp, nil
+}
+
+// fetchSmall reads a release's sums or signature file.
+func fetchSmall(ctx context.Context, a *Asset) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, attemptTimeout)
+	defer cancel()
+	resp, err := get(ctx, a.URL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxSmall+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxSmall {
+		return nil, notSigned("the signature files are too big")
+	}
+	return b, nil
 }
 
 // Names of the new exe while it downloads, and of the replaced one until it

@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
+	"github.com/ApolloF/syncer/internal/accounts"
+	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/features"
 	"github.com/ApolloF/syncer/internal/logx"
 	"github.com/ApolloF/syncer/internal/meta"
@@ -127,7 +129,31 @@ func (a *App) InstallUpdate() error {
 	return a.installUpdate(ctx, false)
 }
 
-var errBackupRunning = errors.New("a backup is running; update once it has finished")
+// errBusy: Syncer is backing up, or moving saves between accounts, and the
+// exe swap must not interrupt that.
+var errBusy = errors.New("Syncer is busy with your saves; update once that has finished")
+
+// swapExe puts the downloaded exe in place while no backup runs and no
+// account operation is pending or starting.
+func swapExe(exe, downloaded string) error {
+	// A running operation holds the lock for a while; say so at once instead
+	// of waiting for it.
+	if _, pending := accounts.PendingOp(); pending {
+		return errBusy
+	}
+	err := accounts.Locked(func() error {
+		unlock, err := backup.Lock()
+		if err != nil {
+			return errBusy
+		}
+		defer unlock()
+		return update.Replace(exe, downloaded)
+	})
+	if errors.Is(err, accounts.ErrBusy) {
+		return errBusy
+	}
+	return err
+}
 
 // installUpdate replaces Syncer.exe with the newest release's and restarts.
 // Installed and portable copies both update this way (the installer does
@@ -146,9 +172,9 @@ func (a *App) installUpdate(ctx context.Context, auto bool) error {
 		a.mu.Unlock()
 		return errors.New("Syncer is already updating")
 	}
-	if a.backingUp {
+	if _, pending := accounts.PendingOp(); a.backingUp || pending {
 		a.mu.Unlock()
-		return errBackupRunning
+		return errBusy
 	}
 	a.updating = true
 	a.mu.Unlock()
@@ -168,7 +194,11 @@ func (a *App) installUpdate(ctx context.Context, auto bool) error {
 	if r.Exe == nil {
 		return errors.New("Syncer " + r.Tag + " can't be installed from here; download it from GitHub")
 	}
-	path, err := update.Download(ctx, r.Exe, filepath.Dir(exe))
+	path, err := update.Download(ctx, r, version, filepath.Dir(exe))
+	if errors.Is(err, update.ErrNotSigned) {
+		logx.Printf("Syncer %s was not installed: %v", r.Tag, err)
+		return update.ErrNotSigned
+	}
 	if err != nil {
 		return fmt.Errorf("download Syncer %s: %w", r.Tag, err)
 	}
@@ -180,10 +210,16 @@ func (a *App) installUpdate(ctx context.Context, auto bool) error {
 		if auto {
 			return nil // next time
 		}
-		return errBackupRunning
+		return errBusy
 	}
-	if err := update.Replace(exe, path); err != nil {
+	if err := swapExe(exe, path); err != nil {
 		_ = os.Remove(path)
+		if errors.Is(err, errBusy) {
+			if auto {
+				return nil // next time
+			}
+			return err
+		}
 		return fmt.Errorf("install Syncer %s: %w", r.Tag, err)
 	}
 	logx.Printf("updated to Syncer %s (from %s), restarting", r.Tag, version)
