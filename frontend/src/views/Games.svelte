@@ -26,7 +26,7 @@
   import RestoreDialog from '../lib/RestoreDialog.svelte'
   import { ui, attempt, fail, refresh, toast, accountName, accountColor } from '../lib/state.svelte'
   import { bytes, ago, when, err } from '../lib/fmt'
-  import { isTime, plural, backupLine, stateOf, waitReason } from '../lib/folders'
+  import { isTime, plural, backupLine, stateOf, waitReason, sameName } from '../lib/folders'
   import { conflictBadge, conflictPCs as pcsOf, currentLabel, otherLabel } from '../lib/conflicts'
   import { byModKind, modGameName, modPhase } from '../lib/mods'
   import { modsAvailable, modsPageOn } from '../lib/features'
@@ -56,6 +56,7 @@
   let restoreFor = $state<app.FolderView | null>(null)
   let removeFor = $state<app.FolderView | null>(null)
   let deleteBackupToo = $state(false)
+  let removeTyped = $state('')
   let custom = $state<{ path: string; name: string } | null>(null)
   let conflictsFor = $state<app.FolderView | null>(null)
   let conflicts = $state<conflict.Conflict[]>([])
@@ -482,6 +483,7 @@
   function openRemove(f: app.FolderView) {
     removeFor = f
     deleteBackupToo = false
+    removeTyped = ''
   }
 
   async function doRemove() {
@@ -489,7 +491,9 @@
     const f = removeFor
     const del = deleteBackupToo
     removeFor = null
-    if (await attempt(() => RemoveFolder(f.id, del), `Removed ${f.label} from Syncer`)) {
+    let note = ''
+    if (await attempt(async () => { note = await RemoveFolder(f.id, del) })) {
+      toast(note ? `Removed ${f.label} from Syncer · ${note}` : `Removed ${f.label} from Syncer`, 'ok')
       cache.found = null
       load(); refresh()
     }
@@ -503,7 +507,6 @@
     deleteAck = false
   }
 
-  const sameName = (typed: string, name: string) => typed.trim().toLowerCase() === name.trim().toLowerCase()
   const deleteUnbacked = $derived(!!deleteFor && (!deleteFor.backup || !o?.target))
   const canDelete = $derived(!!deleteFor && sameName(deleteTyped, deleteFor.label) && (!deleteUnbacked || deleteAck))
 
@@ -1196,13 +1199,19 @@
     <p>Syncer stops syncing and backing up this folder on this PC and removes its sync markers. Your save files stay where they are; your other PCs keep their copy.</p>
     {#if removeInner.length}<p class="small">{names(removeInner)} keep{removeInner.length === 1 ? 's' : ''} syncing through {removeInner.length === 1 ? 'its own save folder' : 'their own save folders'}.</p>{/if}
     <label class="chk"><input type="checkbox" bind:checked={deleteBackupToo} /> Also delete its backup and history</label>
-    {#if deleteBackupToo}<p class="err small">This can't be undone from Syncer.</p>{/if}
+    {#if deleteBackupToo}
+      <p class="err small">This can't be undone from Syncer.</p>
+      <label class="confirm">
+        <span>Type <b>{f.label}</b> to confirm</span>
+        <input type="text" bind:value={removeTyped} spellcheck="false" autocomplete="off" />
+      </label>
+    {/if}
     {#if f.exists && !removeInner.length}
       <p class="small">Want the save files on this PC gone instead? <button class="linkbtn danger" onclick={() => openDelete(f)}>Delete the save files…</button></p>
     {/if}
     {#snippet actions()}
       <button class="btn" onclick={() => (removeFor = null)}>Cancel</button>
-      <button class="btn primary" onclick={doRemove}>Remove</button>
+      <button class="btn primary" disabled={deleteBackupToo && !sameName(removeTyped, f.label)} onclick={doRemove}>Remove</button>
     {/snippet}
   </Modal>
 {/if}

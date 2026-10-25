@@ -562,7 +562,7 @@ func (a *App) SetFolderSync(id string, on bool) error {
 		if err := a.share(ctx, c, sid, lf.Label, lf.Path, s.NoBackup[id]); err != nil {
 			return err
 		}
-		_ = forgetBackup(id, false) // backups continue under the synced id
+		_, _ = forgetBackup(id, false) // backups continue under the synced id
 		_, err = store.UpdateSettings(func(s *store.Settings) {
 			delete(s.BackupOnly, id)
 			delete(s.NoBackup, id)
@@ -602,7 +602,7 @@ func (a *App) stopSync(ctx context.Context, c *syncthing.Client, id string) (str
 		return "", err
 	}
 	histErr := keepHistory(a.ctx, s, f.ID, bid)
-	_ = forgetBackup(f.ID, false) // this PC no longer backs up the synced id
+	_, _ = forgetBackup(f.ID, false) // this PC no longer backs up the synced id
 	dropModState(ctx, c, f.ID)
 	_, _ = meta.Reconcile(ctx, c)
 	if s.NoBackup[bid] {
@@ -675,17 +675,19 @@ func findFolder(ctx context.Context, c *syncthing.Client, id string) (syncthing.
 
 // RemoveFolder takes a game out of Syncer on this PC: it stops syncing and
 // backing it up and removes Syncthing's marker files. Save files are never
-// deleted; with deleteBackup its Drive backup and history go too.
-func (a *App) RemoveFolder(id string, deleteBackup bool) error {
+// deleted; with deleteBackup its Drive backup and history go too, unless
+// another PC still backs it up: then the returned message says so.
+func (a *App) RemoveFolder(id string, deleteBackup bool) (string, error) {
 	if applying.has(id) {
-		return errApplying
+		return "", errApplying
 	}
 	if err := splitGuard(id); err != nil {
-		return err
+		return "", err
 	}
 	if lf, ok := store.LoadSettings().BackupOnly[id]; ok {
-		if err := forgetBackup(id, deleteBackup); err != nil {
-			return err
+		other, err := forgetBackup(id, deleteBackup)
+		if err != nil {
+			return "", err
 		}
 		if _, err := store.UpdateSettings(func(s *store.Settings) {
 			delete(s.BackupOnly, id)
@@ -693,27 +695,27 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 			delete(s.Mods, id)
 			s.Dismissed[dismissKey(lf.Path)] = true
 		}); err != nil {
-			return err
+			return "", err
 		}
 		logx.Printf("removed %s", lf.Label)
 		runtime.EventsEmit(a.ctx, "changed")
-		return nil
+		return removeMessage(deleteBackup, other), nil
 	}
 	c, err := a.client()
 	if err != nil {
-		return err
+		return "", err
 	}
 	ctx, cancel := a.callCtx()
 	defer cancel()
 	f, err := findFolder(ctx, c, id)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Hold the backup lock from here on: once the folder is gone from the
 	// list, a failed deletion couldn't be retried from Syncer.
 	unlock, err := backup.Lock()
 	if err != nil && deleteBackup {
-		return err
+		return "", err
 	}
 	if err == nil {
 		defer func() {
@@ -726,10 +728,10 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 	}
 	target, ok := backupTarget(store.LoadSettings())
 	if deleteBackup && !ok {
-		return errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
+		return "", errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
 	}
 	if err := c.RemoveFolder(ctx, id); err != nil {
-		return err
+		return "", err
 	}
 	cleanMarkers(f.Path)
 	_, _ = store.UpdateSettings(func(s *store.Settings) {
@@ -739,14 +741,16 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 		delete(s.Mods, id)
 	})
 	dropModState(ctx, c, id)
+	var other string
 	if unlock != nil && paths.ValidID(id) {
-		err := backup.Forget(target, id, deleteBackup)
+		var err error
+		other, err = backup.Forget(target, id, deleteBackup)
 		unlock()
 		unlock = nil
 		if err != nil {
 			_, _ = meta.Reconcile(ctx, c)
 			runtime.EventsEmit(a.ctx, "changed")
-			return fmt.Errorf("stopped syncing, but the backup wasn't deleted: %w", err)
+			return "", fmt.Errorf("stopped syncing, but the backup wasn't deleted: %w", err)
 		}
 	}
 	// Not while holding the backup lock: reconciling may carry out another
@@ -754,7 +758,19 @@ func (a *App) RemoveFolder(id string, deleteBackup bool) error {
 	_, _ = meta.Reconcile(ctx, c)
 	logx.Printf("removed %s (backup deleted: %v)", cmpOr(f.Label, id), deleteBackup)
 	runtime.EventsEmit(a.ctx, "changed")
-	return nil
+	return removeMessage(deleteBackup, other), nil
+}
+
+// removeMessage is what RemoveFolder tells the user about the backup: nothing
+// unless they asked for it to be deleted.
+func removeMessage(deleteBackup bool, stillBackedUpBy string) string {
+	switch {
+	case !deleteBackup:
+		return ""
+	case stillBackedUpBy != "":
+		return stillBackedUpBy + " still backs it up here, so the backup stays"
+	}
+	return "Backup deleted"
 }
 
 func isHistoryError(err error) bool {
@@ -790,17 +806,17 @@ func keepHistory(ctx context.Context, s store.Settings, from, to string) error {
 }
 
 // forgetBackup drops a folder's backup bookkeeping and, if asked, its backup.
-func forgetBackup(id string, deleteBackup bool) error {
+func forgetBackup(id string, deleteBackup bool) (string, error) {
 	if !paths.ValidID(id) {
-		return nil // never backed up
+		return "", nil // never backed up
 	}
 	target, ok := backupTarget(store.LoadSettings())
 	if deleteBackup && !ok {
-		return errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
+		return "", errors.New("the backup folder isn't reachable, so the backup can't be deleted right now")
 	}
 	unlock, err := backup.Lock()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer unlock()
 	return backup.Forget(target, id, deleteBackup)
@@ -1008,7 +1024,7 @@ func (a *App) RemoveUninstalled() (int, error) {
 		}
 		cleanMarkers(f.Path)
 		if paths.ValidID(f.ID) {
-			_ = forgetBackup(f.ID, false) // its backup stays; this PC's bookkeeping goes
+			_, _ = forgetBackup(f.ID, false) // its backup stays; this PC's bookkeeping goes
 		}
 		n++
 	}
