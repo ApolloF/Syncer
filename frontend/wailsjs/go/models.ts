@@ -392,6 +392,7 @@ export namespace app {
 	export class JoinView {
 	    id: string;
 	    name: string;
+	    via: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new JoinView(source);
@@ -401,6 +402,7 @@ export namespace app {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
+	        this.via = source["via"];
 	    }
 	}
 	export class PendingView {

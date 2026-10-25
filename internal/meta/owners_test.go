@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"maps"
@@ -129,12 +130,12 @@ func TestOwnDevicesAndFolders(t *testing.T) {
 	for _, d := range OwnDevices("ME", ds) {
 		got = append(got, d.DeviceID)
 	}
-	if strings.Join(got, ",") != "ME,DESKTOP,NEW" {
-		t.Errorf("devices %v, want this PC, the one with a folder list and the one paired in Syncer", got)
+	if strings.Join(got, ",") != "ME,NEW" {
+		t.Errorf("devices %v, want this PC and the one paired in Syncer: a folder list grants nothing", got)
 	}
 	ForgetSyncerPC("NEW")
-	if n := len(OwnDevices("ME", ds)); n != 2 {
-		t.Errorf("%d devices after forgetting one, want 2", n)
+	if n := len(OwnDevices("ME", ds)); n != 1 {
+		t.Errorf("%d devices after forgetting one, want 1", n)
 	}
 
 	store.UpdateState(func(st *store.State) { st.OtherFolders = map[string]bool{"notes": true} })
@@ -176,16 +177,47 @@ func TestWriteVortexListsLeavesAnUnchangedFileAlone(t *testing.T) {
 	}
 }
 
+// writtenBySelf records PC device's file, as it is now, as last written by
+// that PC, as a reconcile finds out from Syncthing.
+func writtenBySelf(t *testing.T, device string) {
+	t.Helper()
+	sum, ok := fileSum(device)
+	if !ok {
+		t.Fatalf("no file of %s", device)
+	}
+	writers.Lock()
+	defer writers.Unlock()
+	if writers.m == nil {
+		writers.m = map[string]writerCheck{}
+	}
+	writers.m[device] = writerCheck{sum, true}
+}
+
 // fakeSyncthing is a Syncthing that, besides Syncer's PCs, syncs a notes
 // vault with a server and a laptop, as one paired before Syncer was fixed:
 // every folder offered to every device.
 type fakeSyncthing struct {
 	mu      sync.Mutex
+	me      string // this PC's id ("ME" if unset)
 	folders map[string]syncthing.Folder
 	devices map[string]syncthing.Device
 	remote  map[string]string // folder/device -> remote state
 	pending map[string]any
 	patches []string
+	// devicePatches are the devices whose config was changed.
+	devicePatches []string
+	// connected devices; completion of folder/device (100 if unset).
+	connected  map[string]bool
+	completion map[string]float64
+	// writer of a file in the shared settings by name (by default the PC
+	// the file is named after); scans asked for.
+	writer map[string]string
+	scans  []string
+	onScan func()
+	// onStatus runs when a folder's status is asked; failDevicePatch makes
+	// every change of a device's config fail.
+	onStatus        func()
+	failDevicePatch bool
 }
 
 func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +227,32 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	switch call := r.Method + " " + r.URL.Path; {
 	case call == "GET /rest/system/status":
-		reply(map[string]any{"myID": "ME"})
+		reply(map[string]any{"myID": cmp.Or(f.me, "ME")})
+	case call == "GET /rest/system/connections":
+		conns := map[string]any{}
+		for id, on := range f.connected {
+			conns[id] = map[string]any{"connected": on}
+		}
+		reply(map[string]any{"connections": conns})
+	case call == "POST /rest/config/devices":
+		var d syncthing.Device
+		_ = json.NewDecoder(r.Body).Decode(&d)
+		f.devices[d.DeviceID] = d
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/rest/config/devices/"):
+		// Unlike Syncthing, the folders keep listing it: Syncer takes it off them itself.
+		delete(f.devices, strings.TrimPrefix(r.URL.Path, "/rest/config/devices/"))
+	case call == "GET /rest/db/file":
+		name := q.Get("file")
+		by, ok := f.writer[name]
+		if !ok {
+			by = strings.TrimSuffix(name, filepath.Ext(name))
+		}
+		reply(map[string]any{"global": map[string]any{"modifiedBy": by[:min(7, len(by))]}})
+	case call == "POST /rest/db/scan":
+		f.scans = append(f.scans, q.Get("folder"))
+		if f.onScan != nil {
+			f.onScan()
+		}
 	case call == "GET /rest/config/devices":
 		var out []syncthing.Device
 		for _, id := range slices.Sorted(maps.Keys(f.devices)) {
@@ -226,15 +283,29 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/config/devices/"):
 		reply(f.devices[strings.TrimPrefix(r.URL.Path, "/rest/config/devices/")])
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/rest/config/devices/") && f.failDevicePatch:
+		http.Error(w, "config is read-only", http.StatusInternalServerError)
 	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/rest/config/devices/"):
 		id := strings.TrimPrefix(r.URL.Path, "/rest/config/devices/")
 		var p struct {
-			IgnoredFolders []syncthing.ObservedFolder `json:"ignoredFolders"`
+			IgnoredFolders *[]syncthing.ObservedFolder `json:"ignoredFolders"`
+			Introducer     *bool                       `json:"introducer"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&p)
+		f.devicePatches = append(f.devicePatches, id)
 		d := f.devices[id]
-		d.IgnoredFolders = p.IgnoredFolders
+		if p.IgnoredFolders != nil {
+			d.IgnoredFolders = *p.IgnoredFolders
+		}
+		if p.Introducer != nil {
+			d.Introducer = *p.Introducer
+		}
 		f.devices[id] = d
+	case call == "GET /rest/db/status":
+		if f.onStatus != nil {
+			f.onStatus()
+		}
+		reply(map[string]any{})
 	case call == "GET /rest/cluster/pending/folders":
 		reply(f.pending)
 	case call == "GET /rest/db/completion":
@@ -243,7 +314,11 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 		if !ok || !slices.ContainsFunc(f.folders[q.Get("folder")].Devices, func(d syncthing.FolderDevice) bool { return d.DeviceID == q.Get("device") }) {
 			rs = syncthing.RemoteUnknown
 		}
-		reply(map[string]any{"completion": 100, "remoteState": rs})
+		comp, ok := f.completion[q.Get("folder")+"/"+q.Get("device")]
+		if !ok {
+			comp = 100
+		}
+		reply(map[string]any{"completion": comp, "remoteState": rs})
 	default:
 		reply(map[string]any{})
 	}

@@ -4,7 +4,7 @@
   import Modal from '../lib/Modal.svelte'
   import { ui, attempt, fail, refresh, toast } from '../lib/state.svelte'
   import { bytes } from '../lib/fmt'
-  import { idSegments, selfName } from '../lib/devices'
+  import { allowNote, checkWhere, idSegments, namedBy, ignoredNote, requestNote, requestTitle, selfName, unlinkedMessage, unlinkNote } from '../lib/devices'
   import { Devices, AddDevice, DismissDevice, RemoveDevice, AcceptDevice, AllowJoin, IgnoreJoin, CopyText, PasteText } from '../../wailsjs/go/app/App'
   import type { app } from '../../wailsjs/go/models'
 
@@ -18,7 +18,7 @@
   let removeFor = $state<app.DeviceView | null>(null)
   let showQR = $state(false)
   // A PC to check the ID of before it is linked (a request) or allowed (a PC that offered to join).
-  let confirmFor = $state<{ id: string; name: string; join: boolean } | null>(null)
+  let confirmFor = $state<{ id: string; name: string; join: boolean; via?: string } | null>(null)
 
   async function load() {
     try { v = await Devices() } catch (e) { if (ui.overview?.syncthing.running) fail(e) }
@@ -43,6 +43,17 @@
       : await attempt(() => AcceptDevice(c.id), 'Linked. Saves will start syncing in a moment.')
     if (ok) { load(); refresh() }
     linking = false
+  }
+
+  async function unlink() {
+    const d = removeFor!
+    removeFor = null
+    const name = d.name || d.id.slice(0, 7)
+    try {
+      const told = await RemoveDevice(d.id)
+      toast(unlinkedMessage(name, d.connected, told), told || !d.connected ? 'ok' : 'info')
+    } catch (e) { fail(e) }
+    load(); refresh()
   }
 
   async function ignore(d: app.JoinView) {
@@ -86,11 +97,12 @@
     <div class="card request" transition:slide={{ duration: 160 }}>
       <div class="ic"><Icon name="devices" /></div>
       <div class="grow">
-        <h2>{d.name} wants to join as one of your PCs</h2>
-        <p class="muted small">It is already connected to this PC and says it runs Syncer. Allow it only if it is your own PC running Syncer: it gets all your game saves.</p>
+        <h2>{requestTitle(d)}</h2>
+        <p class="muted small">{requestNote(d)}</p>
+        <p class="mono faint id">{#each idSegments(d.id) as s}<span class="grp">{s.group}</span>{#if s.dash}<span class="sep">-</span><wbr />{/if}{/each}</p>
       </div>
       <button class="btn ghost" onclick={() => ignore(d)}>Ignore</button>
-      <button class="btn primary" onclick={() => (confirmFor = { id: d.id, name: d.name, join: true })}>Allow</button>
+      <button class="btn primary" onclick={() => (confirmFor = { id: d.id, name: d.name, join: true, via: d.via })}>Allow</button>
     </div>
   {/each}
 
@@ -139,9 +151,9 @@
         <div class="item">
           <div class="grow">
             <div class="name">{d.name}</div>
-            <div class="faint small">Asked to join as one of your PCs. Syncer leaves it alone.</div>
+            <div class="faint small">{ignoredNote(d)}</div>
           </div>
-          <button class="btn" onclick={() => (confirmFor = { id: d.id, name: d.name, join: true })}>Allow</button>
+          <button class="btn" onclick={() => (confirmFor = { id: d.id, name: d.name, join: true, via: d.via })}>Allow</button>
         </div>
       {/each}
     </div>
@@ -185,10 +197,10 @@
 {#if confirmFor}
   <Modal title={confirmFor.join ? 'Allow this PC?' : 'Link this PC?'} onclose={() => (confirmFor = null)}>
     <p>
-      {confirmFor.join ? 'A PC that is already connected to this one says it runs Syncer. If you allow it, it gets all your game saves.' : 'A PC asks to link with yours and get all your game saves.'}
-      The name it gives itself is <strong>{confirmFor.name}</strong>, but anyone can pick any name.
+      {confirmFor.join ? allowNote(confirmFor) : 'A PC asks to link with yours and get all your game saves.'}
+      {namedBy(confirmFor)} <strong>{confirmFor.name}</strong>, but anyone can pick any name.
     </p>
-    <p>Open Devices on your other PC and check that its ID is exactly this one:</p>
+    <p>{checkWhere(confirmFor)}</p>
     <p class="idbox selectable">
       {#each idSegments(confirmFor.id) as s}<span class="grp">{s.group}</span>{#if s.dash}<span class="sep">-</span><wbr />{/if}{/each}
     </p>
@@ -202,10 +214,10 @@
 
 {#if removeFor}
   <Modal title="Unlink {removeFor.name || 'this PC'}?" onclose={() => (removeFor = null)}>
-    <p>Saves stop syncing with that PC. Nothing is deleted on either side.</p>
+    <p>{unlinkNote(removeFor.name, removeFor.connected)}</p>
     {#snippet actions()}
       <button class="btn" onclick={() => (removeFor = null)}>Cancel</button>
-      <button class="btn primary" onclick={async () => { const d = removeFor!; removeFor = null; await attempt(() => RemoveDevice(d.id), 'Unlinked'); load(); refresh() }}>Unlink</button>
+      <button class="btn primary" onclick={unlink}>Unlink</button>
     {/snippet}
   </Modal>
 {/if}
@@ -229,6 +241,7 @@
   .field input { flex: 1; min-width: 0; }
   .request { display: flex; align-items: center; gap: 14px; border-color: var(--accent); }
   .request .mono { font-size: 11.5px; max-width: 440px; }
+  .request .id { max-width: none; overflow-wrap: anywhere; }
   .ic {
     width: 38px; height: 38px; border-radius: 10px; flex: none; display: grid; place-items: center;
     background: var(--accent-soft); color: var(--accent);

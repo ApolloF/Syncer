@@ -8,6 +8,7 @@ package meta
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,6 +85,25 @@ type DeviceFile struct {
 	Accounts *accounts.Shared `json:"accounts,omitempty"`
 	// Mods: this PC's mod options (see ModSettings).
 	Mods *ModSettings `json:"mods,omitempty"`
+	// PCs are the Syncer PCs this one is linked to, for the others to offer
+	// them to the user (never to trust them on their own).
+	PCs []PCRef `json:"pcs,omitempty"`
+	// Unlinked are the PCs this one just unlinked, so each of them drops
+	// the link too.
+	Unlinked []UnlinkNote `json:"unlinked,omitempty"`
+}
+
+// PCRef is a linked PC as another PC names it.
+type PCRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// UnlinkNote tells PC ID that the publishing PC unlinked it at At (unix
+// seconds by the publishing PC's clock).
+type UnlinkNote struct {
+	ID string `json:"id"`
+	At int64  `json:"at"`
 }
 
 // Dir is the local path of the meta folder.
@@ -113,8 +133,21 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	asked, unsure := map[string]bool{}, map[string]bool{}
+	checkWriters(ctx, c, me, asked, unsure)
+	devices = dropUnlinkers(ctx, c, me, devices)
 	pcs := syncerPCs(ctx, c, me, devices)
+	checkWriters(ctx, c, me, asked, unsure) // the PCs just trusted
+	// A PC that can still add devices here gets nothing this round.
+	early, err := c.AllFolders(ctx)
+	if err != nil {
+		return rep, err
+	}
+	for id := range noIntroducers(ctx, c, devices, pcs, early, store.LoadState().SyncerFolders) {
+		delete(pcs, id)
+	}
 	others := slices.Sorted(maps.Keys(pcs))
+	noteIntroductions(me, devices, unsure)
 
 	// Take in the accounts and split games other PCs published, and carry
 	// out the splits and merges this PC hasn't yet, before looking at the
@@ -174,9 +207,12 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 		byID[FolderID] = syncthing.Folder{ID: FolderID, Path: Dir(), Devices: toFD(devList(me, others))}
 	}
 
-	// Publish our own folder list.
-	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature},
-		Version: AppVersion, Rejected: rejectedHere(),
+	// Publish our own folder list. An unlink notice published meanwhile
+	// must not be written over (see publishUnlink).
+	ownFile.Lock()
+	pruneUnlinking()
+	mine := DeviceFile{Device: me, Name: hostname(), Updated: time.Now(), Features: []string{accounts.Feature, PCsFeature},
+		Version: AppVersion, Rejected: rejectedHere(), PCs: linkedPCs(devices, others), Unlinked: unlinkingNow(),
 		Folders: publishable(folders, settings, ast, me, func(id string) int64 {
 			return folderSize(ctx, c, id)
 		})}
@@ -198,6 +234,7 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 			logx.Printf("meta: write own file: %v", err)
 		}
 	}
+	ownFile.Unlock()
 
 	// Adopt folders other PCs have. The most specific paths go first: when
 	// one folder holds another (an old whole-vendor folder around a game's own
@@ -522,6 +559,10 @@ func patchFor(f syncthing.Folder, me string, others []string) map[string]any {
 		sort.Strings(ids[1:])
 		patch["devices"] = devList(ids[0], ids[1:])
 	}
+	if f.ID == FolderID && sharedBeyond(f, me, others) {
+		// Whoever the shared settings reach can write any PC's file in it.
+		patch["devices"] = devList(me, slices.Sorted(slices.Values(others)))
+	}
 	if f.ID != FolderID && f.Versioning.Type == "" {
 		patch["versioning"] = syncthing.StaggeredVersioning()
 	}
@@ -529,6 +570,17 @@ func patchFor(f syncthing.Folder, me string, others []string) map[string]any {
 		patch["maxConflicts"] = -1
 	}
 	return patch
+}
+
+// sharedBeyond reports whether folder f is shared with a device other than
+// me and others.
+func sharedBeyond(f syncthing.Folder, me string, others []string) bool {
+	for _, d := range f.Devices {
+		if d.DeviceID != me && !slices.Contains(others, d.DeviceID) {
+			return true
+		}
+	}
+	return false
 }
 
 // BeforeAdd, when set, prepares a folder's directory just before Syncthing
@@ -1115,7 +1167,7 @@ func changed(me string, df DeviceFile) bool {
 	om, _ := json.Marshal(old.Mods)
 	nm, _ := json.Marshal(df.Mods)
 	if string(oa) != string(na) || string(om) != string(nm) || strings.Join(old.Features, ",") != strings.Join(df.Features, ",") ||
-		!maps.EqualFunc(old.Rejected, df.Rejected, slices.Equal) {
+		!maps.EqualFunc(old.Rejected, df.Rejected, slices.Equal) || !slices.Equal(old.PCs, df.PCs) || !slices.Equal(old.Unlinked, df.Unlinked) {
 		return true
 	}
 	for i := range old.Folders {
@@ -1132,8 +1184,22 @@ const maxDeviceFile = 1 << 20
 // readDeviceFiles parses every PC's published file, skipping oversized or
 // malformed ones: they arrive from other PCs and aren't trusted.
 func readDeviceFiles() []DeviceFile {
-	es, _ := os.ReadDir(Dir())
 	var out []DeviceFile
+	for _, f := range readSummed() {
+		out = append(out, f.DeviceFile)
+	}
+	return out
+}
+
+// summedFile is a PC's published file and the hash of its content.
+type summedFile struct {
+	DeviceFile
+	sum [sha256.Size]byte
+}
+
+func readSummed() []summedFile {
+	es, _ := os.ReadDir(Dir())
+	var out []summedFile
 	for _, e := range es {
 		n := e.Name()
 		if !e.Type().IsRegular() || !strings.HasSuffix(n, ".json") {
@@ -1148,20 +1214,103 @@ func readDeviceFiles() []DeviceFile {
 		}
 		var df DeviceFile
 		if json.Unmarshal(b, &df) == nil && df.Device != "" && df.Device+".json" == n {
-			out = append(out, df)
+			out = append(out, summedFile{df, sha256.Sum256(b)})
 		}
 	}
 	return out
 }
 
+// readOtherFiles are the files of the other PCs trusted here that each PC
+// last wrote itself (see checkWriters). Any device the shared settings
+// reach, and any PC there, can put a file there: one of a device that isn't
+// trusted, or written by another, is left unread.
 func readOtherFiles(me string) []DeviceFile {
+	known := knownPCs()
 	var out []DeviceFile
-	for _, df := range readDeviceFiles() {
-		if df.Device != me {
-			out = append(out, df)
+	for _, f := range readSummed() {
+		if f.Device != me && known[f.Device] && ownWriter(f.Device, f.sum) {
+			out = append(out, f.DeviceFile)
 		}
 	}
 	return out
+}
+
+// writers remembers, per PC, whether it last wrote its own file in the
+// shared settings, for the exact content that was there when Syncthing was
+// asked: a file put back with the same size and time is asked about anew.
+var writers struct {
+	sync.Mutex
+	m map[string]writerCheck
+}
+
+type writerCheck struct {
+	sum [sha256.Size]byte
+	own bool
+}
+
+// fileSum is the hash of PC device's file in the shared settings.
+func fileSum(device string) ([sha256.Size]byte, bool) {
+	p := filepath.Join(Dir(), device+".json")
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() || fi.Size() > maxDeviceFile {
+		return [sha256.Size]byte{}, false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return [sha256.Size]byte{}, false
+	}
+	return sha256.Sum256(b), true
+}
+
+// checkWriters asks Syncthing, once a round for each trusted PC (asked
+// keeps who was asked this round), which device last wrote that PC's file.
+// It notes in unsure the PCs whose file isn't read this round. A file just
+// arrived may not be in Syncthing's index yet: it is asked again next round
+// rather than taken as written by another.
+//
+// This guards against mistakes and relays: a file another PC wrote, or an
+// older Syncer passed on, for a PC. It can't stop a device that lies to
+// Syncthing about who changed a file; the shared settings reach only
+// trusted PCs for that.
+func checkWriters(ctx context.Context, c *syncthing.Client, me string, asked, unsure map[string]bool) {
+	for id := range knownPCs() {
+		if id == me || asked[id] {
+			continue
+		}
+		before, ok := fileSum(id)
+		if !ok {
+			continue
+		}
+		asked[id] = true
+		by, err := c.ModifiedBy(ctx, FolderID, id+".json")
+		after, _ := fileSum(id)
+		if err != nil || by == "" || after != before {
+			writers.Lock()
+			delete(writers.m, id)
+			writers.Unlock()
+			unsure[id] = true
+			continue
+		}
+		w := writerCheck{before, strings.EqualFold(by, shortID(id))}
+		if !w.own {
+			warnOnce("writer:"+id+by, "meta: the file of %s was last written by %s: not read", shortID(id), by)
+			unsure[id] = true
+		}
+		writers.Lock()
+		if writers.m == nil {
+			writers.m = map[string]writerCheck{}
+		}
+		writers.m[id] = w
+		writers.Unlock()
+	}
+}
+
+// ownWriter reports whether PC device's file with content hash sum was
+// found written by that PC.
+func ownWriter(device string, sum [sha256.Size]byte) bool {
+	writers.Lock()
+	defer writers.Unlock()
+	w, seen := writers.m[device]
+	return seen && w.own && w.sum == sum
 }
 
 // readOthers unions the folder lists published by other PCs.

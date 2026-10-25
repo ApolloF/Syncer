@@ -19,6 +19,7 @@ func TestModSettingsNewestWins(t *testing.T) {
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	MarkSyncerPC("PEER")
 	t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := store.UpdateSettings(func(s *store.Settings) {
 		s.FindMods, s.ModsMaxGB, s.ModsChanged = true, 20, t0
@@ -29,6 +30,7 @@ func TestModSettingsNewestWins(t *testing.T) {
 		if err := store.WriteJSON(filepath.Join(Dir(), "PEER.json"), DeviceFile{Device: "PEER", Name: "Laptop", Mods: m}); err != nil {
 			t.Fatal(err)
 		}
+		writtenBySelf(t, "PEER")
 	}
 	var took []store.Settings
 	ModSettingsAdopted = func(_ context.Context, _ *syncthing.Client, old, now store.Settings) { took = append(took, now) }

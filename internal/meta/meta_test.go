@@ -154,6 +154,10 @@ func TestPatchFor(t *testing.T) {
 	if len(m) != 0 {
 		t.Errorf("metadata folder needs no versioning or conflict copies: %v", m)
 	}
+	m = patchFor(syncthing.Folder{ID: FolderID, Devices: fd("me", "b", "stranger")}, "me", []string{"b"})
+	if got := devIDs(m["devices"]); got != "me b" {
+		t.Errorf("metadata folder shared with %q, want only this PC and the trusted one", got)
+	}
 }
 
 func devIDs(v any) string {
