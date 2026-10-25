@@ -46,7 +46,7 @@ describe('join requests', () => {
   it('names the linked PC a PC came through', () => {
     expect(requestTitle({ name: 'SYNCER-C', via: 'SYNCER-A' })).toBe('SYNCER-C wants to join as one of your PCs')
     expect(requestNote({ name: 'SYNCER-C', via: 'SYNCER-A' })).toBe('Your PC SYNCER-A is linked to SYNCER-C. Allow it here only if it is your own PC running Syncer: it gets all your game saves.')
-    expect(allowNote({ name: 'SYNCER-C', via: 'SYNCER-A' })).toBe('Your PC SYNCER-A is linked to it. If you allow it here too, it gets all your game saves.')
+    expect(allowNote({ name: 'SYNCER-C', via: 'SYNCER-A' })).toBe('Your PC SYNCER-A is linked to it. If you allow it here too, it gets all your game saves, and it links to this PC by itself.')
     expect(namedBy({ name: 'SYNCER-C', via: 'SYNCER-A' })).toBe('SYNCER-A calls it')
     expect(checkWhere({ name: 'SYNCER-C', via: 'SYNCER-A' })).toMatch(/^Open Devices on the new PC itself/)
     expect(ignoredNote({ name: 'SYNCER-C', via: 'SYNCER-A' })).toBe('Linked to SYNCER-A. Syncer leaves it alone here.')

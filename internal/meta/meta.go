@@ -86,7 +86,9 @@ type DeviceFile struct {
 	// Mods: this PC's mod options (see ModSettings).
 	Mods *ModSettings `json:"mods,omitempty"`
 	// PCs are the Syncer PCs this one is linked to, for the others to offer
-	// them to the user (never to trust them on their own).
+	// them to the user. On their own they never make a PC trusted: one a
+	// trusted PC lists is linked without asking only when its own file lists
+	// this PC too, as its user allowed this one there (see allowVouched).
 	PCs []PCRef `json:"pcs,omitempty"`
 	// Unlinked are the PCs this one just unlinked, so each of them drops
 	// the link too.
@@ -146,8 +148,16 @@ func Reconcile(ctx context.Context, c *syncthing.Client) (Report, error) {
 	for id := range noIntroducers(ctx, c, devices, pcs, early, store.LoadState().SyncerFolders) {
 		delete(pcs, id)
 	}
-	others := slices.Sorted(maps.Keys(pcs))
 	noteIntroductions(me, devices, unsure)
+	if ids := allowVouched(ctx, c, me, devices); len(ids) > 0 {
+		for _, id := range ids {
+			pcs[id] = true
+		}
+		if ds, err := c.AllDevices(ctx); err == nil {
+			devices = ds
+		}
+	}
+	others := slices.Sorted(maps.Keys(pcs))
 
 	// Take in the accounts and split games other PCs published, and carry
 	// out the splits and merges this PC hasn't yet, before looking at the

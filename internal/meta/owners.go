@@ -87,6 +87,15 @@ func MarkSyncerPC(id string) {
 // added to Syncthing when it isn't there yet (a PC another one is linked
 // to), and gets the saves.
 func AllowPC(ctx context.Context, c *syncthing.Client, d syncthing.Device) error {
+	if err := admitPC(ctx, c, d); err != nil {
+		return err
+	}
+	_, err := Reconcile(ctx, c)
+	return err
+}
+
+// admitPC is AllowPC short of sharing the saves.
+func admitPC(ctx context.Context, c *syncthing.Client, d syncthing.Device) error {
 	ds, err := c.AllDevices(ctx)
 	if err != nil {
 		return err
@@ -106,8 +115,7 @@ func AllowPC(ctx context.Context, c *syncthing.Client, d syncthing.Device) error
 	}
 	MarkSyncerPC(d.DeviceID)
 	_ = c.DismissPendingDevice(ctx, d.DeviceID)
-	_, err = Reconcile(ctx, c)
-	return err
+	return nil
 }
 
 // ForgetSyncerPC drops device from the PCs known to run Syncer, and any
@@ -390,6 +398,60 @@ func noteIntroductions(me string, ds []syncthing.Device, unsure map[string]bool)
 			st.Introduced[id] = in
 		}
 	})
+}
+
+// allowVouched links the PCs that allowed this one (me) on their side, so
+// a pair takes one Allow, on either PC. A PC counts when a trusted PC's own
+// file (read this round, see readOtherFiles) introduces it and its own file,
+// which that PC relays here, lists me. Of that file only the list is read,
+// and only when Syncthing says the PC itself last wrote it: any device the
+// shared settings reach can put one there. A PC turned down here stays so.
+// It returns the PCs linked.
+func allowVouched(ctx context.Context, c *syncthing.Client, me string, ds []syncthing.Device) []string {
+	st := store.LoadState()
+	linked := map[string]bool{}
+	for _, d := range ds {
+		linked[d.DeviceID] = true
+	}
+	cands := map[string]bool{}
+	for _, df := range readOtherFiles(me) {
+		if !linked[df.Device] {
+			continue
+		}
+		for _, p := range df.PCs {
+			if _, in := st.Introduced[p.ID]; in && !st.IgnoredPCs[p.ID] {
+				cands[p.ID] = true
+			}
+		}
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	files := map[string]summedFile{}
+	for _, f := range readSummed() {
+		if cands[f.Device] {
+			files[f.Device] = f
+		}
+	}
+	var allowed []string
+	for _, id := range slices.Sorted(maps.Keys(cands)) {
+		f, ok := files[id]
+		if !ok || !slices.ContainsFunc(f.PCs, func(p PCRef) bool { return p.ID == me }) {
+			continue
+		}
+		by, err := c.ModifiedBy(ctx, FolderID, id+".json")
+		if after, _ := fileSum(id); err != nil || after != f.sum || !strings.EqualFold(by, shortID(id)) {
+			continue // written by another, or not known yet: next round
+		}
+		name := cmp.Or(st.Introduced[id].Name, "PC "+shortID(id))
+		if err := admitPC(ctx, c, syncthing.Device{DeviceID: id, Name: name, Addresses: []string{"dynamic"}}); err != nil {
+			logx.Printf("meta: link %s, which allowed this PC: %v", shortID(id), err)
+			continue
+		}
+		logx.Printf("meta: %s (%s) allowed this PC: linked it here too", name, shortID(id))
+		allowed = append(allowed, id)
+	}
+	return allowed
 }
 
 // validDeviceID reports whether id is a Syncthing device id in its usual

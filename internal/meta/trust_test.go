@@ -557,3 +557,161 @@ func TestAnUnsureRoundKeepsAnUnlinkedPCTurnedDown(t *testing.T) {
 		t.Errorf("the PC just unlinked is offered again: %v", waiting)
 	}
 }
+
+// introducedBy is PC C (me) linked with B, where B's file lists A, and A's
+// own file, if aFile, lists aLists. A's file is read only for that list.
+func introducedBy(t *testing.T, aFile bool, aLists ...string) (*fakeSyncthing, *syncthing.Client) {
+	t.Helper()
+	fake, c := linkedPair(t, pcC, pcB)
+	if err := store.WriteJSON(filepath.Join(Dir(), pcB+".json"), DeviceFile{Device: pcB, Name: "SYNCER-B",
+		PCs: []PCRef{{ID: pcA, Name: "SYNCER-A"}, {ID: pcC, Name: "SYNCER-C"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if aFile {
+		var pcs []PCRef
+		for _, id := range aLists {
+			pcs = append(pcs, PCRef{ID: id})
+		}
+		if err := store.WriteJSON(filepath.Join(Dir(), pcA+".json"), DeviceFile{Device: pcA, Name: "SYNCER-A", PCs: pcs,
+			Folders: []SharedFolder{{ID: "planted", Label: "Planted", Root: paths.Documents, Rel: "Planted"}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return fake, c
+}
+
+// onlyAsks checks that A is offered to the user and nothing more.
+func onlyAsks(t *testing.T, fake *fakeSyncthing) {
+	t.Helper()
+	if waiting, _ := JoinRequests(); !slices.Equal(waiting, []string{pcA}) {
+		t.Errorf("waiting %v", waiting)
+	}
+	if hasDevice(fake, pcA) || store.LoadState().SyncerPCs[pcA] {
+		t.Error("A was linked without the user's OK on either PC")
+	}
+}
+
+func TestAPCThatAllowedThisOneIsLinkedBack(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	fake, c := introducedBy(t, true, pcB, pcC)
+	if _, err := Reconcile(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if !store.LoadState().SyncerPCs[pcA] {
+		t.Fatal("A, which allowed this PC, isn't linked back")
+	}
+	fake.mu.Lock()
+	d, ok := fake.devices[pcA]
+	fake.mu.Unlock()
+	if !ok || d.Introducer || d.Name != "SYNCER-A" {
+		t.Errorf("A added as %+v", d)
+	}
+	if got := sharedWith(fake, "game"); !slices.Contains(got, pcA) {
+		t.Errorf("A doesn't get the saves: %v", got)
+	}
+	if waiting, _ := JoinRequests(); len(waiting) != 0 {
+		t.Errorf("still waiting: %v", waiting)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if _, ok := fake.folders["planted"]; ok {
+		t.Error("a folder from A's file was added before A was trusted")
+	}
+}
+
+func TestAPCsFileWrittenByAnotherDoesntLinkIt(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	fake, c := introducedBy(t, true, pcB, pcC)
+	fake.mu.Lock()
+	fake.writer = map[string]string{pcA + ".json": pcB}
+	fake.mu.Unlock()
+	if _, err := Reconcile(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	onlyAsks(t, fake)
+
+	// Who wrote it can't be told yet: not this round either.
+	fake.mu.Lock()
+	fake.writer = map[string]string{pcA + ".json": ""}
+	fake.mu.Unlock()
+	if _, err := Reconcile(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	onlyAsks(t, fake)
+}
+
+func TestAPCThatDoesntListThisOneOnlyAsks(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	fake, c := introducedBy(t, true, pcB)
+	if _, err := Reconcile(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	onlyAsks(t, fake)
+}
+
+func TestAnIgnoredPCIsntLinkedBack(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	fake, c := introducedBy(t, true, pcB, pcC)
+	IgnorePC(pcA)
+	if _, err := Reconcile(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if _, ignored := JoinRequests(); !slices.Contains(ignored, pcA) {
+		t.Errorf("A is no longer ignored: %v", ignored)
+	}
+	if hasDevice(fake, pcA) || store.LoadState().SyncerPCs[pcA] {
+		t.Error("a PC turned down here was linked")
+	}
+}
+
+func TestAFileListingThisPCAloneLinksNothing(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	fake, c := introducedBy(t, true, pcB, pcC)
+	if err := store.WriteJSON(filepath.Join(Dir(), pcB+".json"), DeviceFile{Device: pcB, Name: "SYNCER-B"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Reconcile(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	st := store.LoadState()
+	if waiting, _ := JoinRequests(); len(waiting) != 0 || len(st.Introduced) > 0 {
+		t.Errorf("waiting %v, introduced %v", waiting, st.Introduced)
+	}
+	if hasDevice(fake, pcA) || st.SyncerPCs[pcA] {
+		t.Error("a PC no trusted PC is linked to was linked")
+	}
+}
+
+func TestAPCIntroducedOnlyByAnUnsureFileWaits(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	fake, c := introducedBy(t, false)
+	ctx := context.Background()
+	if _, err := Reconcile(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	// B's file changes and can't be told this round; A's file arrives.
+	fake.mu.Lock()
+	fake.writer = map[string]string{pcB + ".json": ""}
+	fake.mu.Unlock()
+	if err := store.WriteJSON(filepath.Join(Dir(), pcB+".json"), DeviceFile{Device: pcB, Name: "B",
+		PCs: []PCRef{{ID: pcA, Name: "SYNCER-A"}, {ID: pcC}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteJSON(filepath.Join(Dir(), pcA+".json"), DeviceFile{Device: pcA, PCs: []PCRef{{ID: pcB}, {ID: pcC}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Reconcile(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	onlyAsks(t, fake)
+
+	fake.mu.Lock()
+	fake.writer = nil
+	fake.mu.Unlock()
+	if _, err := Reconcile(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if !store.LoadState().SyncerPCs[pcA] {
+		t.Error("A isn't linked back once B's file is read again")
+	}
+}

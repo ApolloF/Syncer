@@ -37,7 +37,7 @@ export function requestNote(r: JoinAsk): string {
 /** The first sentence of the Allow dialog. */
 export function allowNote(r: JoinAsk): string {
   return r.via
-    ? `Your PC ${r.via} is linked to it. If you allow it here too, it gets all your game saves.`
+    ? `Your PC ${r.via} is linked to it. If you allow it here too, it gets all your game saves, and it links to this PC by itself.`
     : 'A PC that is already connected to this one says it runs Syncer. If you allow it, it gets all your game saves.'
 }
 
