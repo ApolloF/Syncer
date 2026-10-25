@@ -258,7 +258,7 @@ func (a *App) DeleteOtherBackup(id, confirm string) error {
 		return errors.New("a backup is running; try again when it has finished")
 	}
 	defer unlock()
-	if err := backup.Forget(target, id, true); err != nil {
+	if err := backup.ForgetEverywhere(target, id); err != nil {
 		return err
 	}
 	logx.Printf("deleted the backup of %s (%s)", label, id)
