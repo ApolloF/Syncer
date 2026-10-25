@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ApolloF/syncer/internal/backup"
 	"github.com/ApolloF/syncer/internal/paths"
@@ -136,5 +139,45 @@ func TestCleanMarkersStignore(t *testing.T) {
 	cleanMarkers(dir)
 	if b, err := os.ReadFile(ig); err != nil || !strings.HasPrefix(string(b), "// mine\nTrainers/\n") {
 		t.Errorf("user's .stignore changed: %q %v", b, err)
+	}
+}
+
+func TestKeepHistoryCarriesTheBackupTimeToTheNewID(t *testing.T) {
+	defer paths.SetRootForTest(paths.Roaming, t.TempDir())()
+	defer paths.SetRootForTest(paths.Local, t.TempDir())()
+	at := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
+	_ = store.UpdateState(func(st *store.State) { st.FolderBackups = map[string]time.Time{"old": at} })
+	s := store.Settings{BackupRoot: t.TempDir()}
+	if err := keepHistory(context.Background(), s, "old", "old--pc"); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.LoadState().FolderBackups["old--pc"]; !got.Equal(at) {
+		t.Errorf("backup time of the new id = %v, want %v", got, at)
+	}
+	if err := keepHistory(context.Background(), s, "../bad", "x"); err == nil {
+		t.Error("a failed copy was not reported")
+	}
+	if _, ok := store.LoadState().FolderBackups["x"]; ok {
+		t.Error("backup time carried over after a failed copy")
+	}
+}
+
+func TestCheckBackupRoot(t *testing.T) {
+	for _, ok := range []string{"", `D:\GameSaveBackup`, `\\nas\share\saves`} {
+		if err := checkBackupRoot(ok); err != nil {
+			t.Errorf("%q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{`GameSaveBackup`, `..\x`, `\Backups`, `D:Backups`} {
+		if checkBackupRoot(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestHistoryErrorIsToldApart(t *testing.T) {
+	err := fmt.Errorf("x: %w", &historyError{errors.New("disk full")})
+	if !isHistoryError(err) || isHistoryError(errors.New("other")) {
+		t.Error("history errors not told apart")
 	}
 }

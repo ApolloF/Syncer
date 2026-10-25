@@ -250,7 +250,7 @@ export function installMock() {
       ? { mods: false, googleSignIn: false, launchers: false, personal: false }
       : { mods: true, googleSignIn: true, launchers: true, personal: true }, // the dev mock is the personal build
     notices: [],
-    target: pub ? 'D:\\GameSaveBackup' : `${home}\\AppData\\Local\\Syncer\\GameSaveBackup`, lastBackup, backingUp, gaming: false, paused: false,
+    target: pub ? 'D:\\GameSaveBackup' : `${home}\\AppData\\Local\\Syncer\\GameSaveBackup`, lastBackup, lastSuccess: lastBackup.finished, backingUp, gaming: false, paused: false,
     settings, version: 'v1.0.0', versionGaps: [],
   } satisfies Plain<app.Overview>)
 
