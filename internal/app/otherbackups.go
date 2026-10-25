@@ -73,6 +73,17 @@ func (a *App) OtherBackups(refresh bool) ([]backup.Orphan, error) {
 	ctx, cancel := a.callCtx()
 	defer cancel()
 	list := backup.Orphans(ctx, target, func(id string) bool { return known[id] })
+	st := accounts.Load()
+	split := map[string]bool{}
+	for _, r := range st.Splits() {
+		split[r.Game] = true
+	}
+	list = labelAccountBackups(list, split, st.Name, func(game string) string {
+		if r, ok := st.Record(game); ok && r.Label != "" {
+			return r.Label
+		}
+		return backup.LabelFor(target, game)
+	})
 	if ctx.Err() != nil {
 		return list, nil // cut short (a slow Drive): shown, but not kept
 	}
@@ -80,6 +91,31 @@ func (a *App) OtherBackups(refresh bool) ([]backup.Orphan, error) {
 	a.others = &othersCache{at: time.Now(), list: list}
 	a.mu.Unlock()
 	return list, nil
+}
+
+// labelAccountBackups names the history of an account's saves after the game
+// and the person ("Stardew Valley · Alice") instead of its raw id, and drops
+// those of a game that is still split: they are the live account folders
+// (some other PC's account, say), not leftovers.
+func labelAccountBackups(list []backup.Orphan, split map[string]bool, name, gameLabel func(string) string) []backup.Orphan {
+	out := make([]backup.Orphan, 0, len(list))
+	for _, o := range list {
+		game, account, ok := accounts.ParseFolderID(o.ID)
+		if !ok {
+			out = append(out, o)
+			continue
+		}
+		if split[game] {
+			continue
+		}
+		who := name(account)
+		if who == "" {
+			who = "removed account"
+		}
+		o.Label = gameLabel(game) + " · " + who
+		out = append(out, o)
+	}
+	return out
 }
 
 func (a *App) forgetOthers() {

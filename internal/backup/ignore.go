@@ -11,7 +11,13 @@ import (
 // Matcher applies Syncthing-style ignore patterns (from .stignore) plus
 // Syncthing's own bookkeeping files, so the backup mirrors what gets synced.
 type Matcher struct {
-	res []*regexp.Regexp
+	rules []rule
+	neg   bool // some rule un-ignores
+}
+
+type rule struct {
+	re  *regexp.Regexp
+	neg bool
 }
 
 // steam_autocloud.vdf belongs to the PC it's on: Steam writes it for the
@@ -55,15 +61,18 @@ func LoadMatcher(dir string, extra ...string) *Matcher {
 	return NewMatcher(append(pats, extra...))
 }
 
-// NewMatcher compiles patterns. Negations and #include lines are skipped
-// (over-including in a backup is the safe direction).
+// NewMatcher compiles patterns the way Syncthing reads them: in order, the
+// first one that matches decides, and a leading ! un-ignores. #include lines
+// are skipped.
 func NewMatcher(pats []string) *Matcher {
 	m := &Matcher{}
 	for _, p := range pats {
 		p = strings.TrimSpace(p)
-		if p == "" || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "#") || strings.HasPrefix(p, "!") {
+		if p == "" || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "#") {
 			continue
 		}
+		neg := strings.HasPrefix(p, "!")
+		p = strings.TrimSpace(strings.TrimPrefix(p, "!"))
 		for {
 			switch {
 			case strings.HasPrefix(p, "(?d)"), strings.HasPrefix(p, "(?i)"):
@@ -85,7 +94,8 @@ func NewMatcher(pats []string) *Matcher {
 			re = "(^|/)" + re + "(/.*)?$"
 		}
 		if r, err := regexp.Compile("(?i)" + re); err == nil {
-			m.res = append(m.res, r)
+			m.rules = append(m.rules, rule{r, neg})
+			m.neg = m.neg || neg
 		}
 	}
 	return m
@@ -94,13 +104,17 @@ func NewMatcher(pats []string) *Matcher {
 // Ignored reports whether rel (forward or back slashes) is excluded.
 func (m *Matcher) Ignored(rel string) bool {
 	rel = filepath.ToSlash(rel)
-	for _, r := range m.res {
-		if r.MatchString(rel) {
-			return true
+	for _, r := range m.rules {
+		if r.re.MatchString(rel) {
+			return !r.neg
 		}
 	}
 	return false
 }
+
+// HasNegation reports whether a rule un-ignores something, so that an ignored
+// folder may still hold files that are not.
+func (m *Matcher) HasNegation() bool { return m.neg }
 
 func globRE(p string) string {
 	var b strings.Builder

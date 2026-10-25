@@ -574,7 +574,7 @@ func (a *App) SetFolderSync(id string, on bool) error {
 	if err := splitGuard(id); err != nil {
 		return err
 	}
-	if _, err := a.stopSync(ctx, c, id); err != nil {
+	if _, err := a.stopSync(ctx, c, id); err != nil && !isHistoryError(err) {
 		return err
 	}
 	runtime.EventsEmit(a.ctx, "changed")
@@ -601,7 +601,7 @@ func (a *App) stopSync(ctx context.Context, c *syncthing.Client, id string) (str
 	if err != nil {
 		return "", err
 	}
-	keepHistory(a.ctx, s, f.ID, bid)
+	histErr := keepHistory(a.ctx, s, f.ID, bid)
 	_, _ = forgetBackup(f.ID, false) // this PC no longer backs up the synced id
 	dropModState(ctx, c, f.ID)
 	_, _ = meta.Reconcile(ctx, c)
@@ -610,8 +610,19 @@ func (a *App) stopSync(ctx context.Context, c *syncthing.Client, id string) (str
 	} else {
 		logx.Printf("stopped syncing %s; still backing it up", label)
 	}
+	if histErr != nil {
+		return bid, &historyError{histErr}
+	}
 	return bid, nil
 }
+
+// historyError means a game stopped syncing but its backup history didn't all
+// come along to the new id. Callers that only stop syncing carry on; deleting
+// the saves must not.
+type historyError struct{ err error }
+
+func (e *historyError) Error() string { return "keep the backup history: " + e.err.Error() }
+func (e *historyError) Unwrap() error { return e.err }
 
 // toBackupOnly records a synced folder as backup-only on this PC and returns
 // its new id. A game whose backup was off is now neither synced nor backed up.
@@ -762,15 +773,36 @@ func removeMessage(deleteBackup bool, stillBackedUpBy string) string {
 	return "Backup deleted"
 }
 
-// keepHistory copies a game's backup history to its new backup-only id.
-func keepHistory(ctx context.Context, s store.Settings, from, to string) {
+func isHistoryError(err error) bool {
+	var h *historyError
+	return errors.As(err, &h)
+}
+
+// keepHistory carries a game's backup over to its new backup-only id: the
+// history, this PC's info and file list, and when it was last backed up, so
+// the game's row still says "Backed up".
+func keepHistory(ctx context.Context, s store.Settings, from, to string) error {
 	target, ok := backupTarget(s)
 	if !ok {
-		return
+		return nil
 	}
-	if err := backup.CopyHistory(ctx, target, from, to); err != nil {
+	err := backup.CopyHistory(ctx, target, from, to)
+	if err == nil {
+		err = backup.CopyInfo(target, from, to)
+	}
+	if err != nil {
 		logx.Printf("keep backup history of %s: %v", from, err)
+		return err
 	}
+	store.UpdateState(func(st *store.State) {
+		if t, ok := st.FolderBackups[from]; ok {
+			if st.FolderBackups == nil {
+				st.FolderBackups = map[string]time.Time{}
+			}
+			st.FolderBackups[to] = t
+		}
+	})
+	return nil
 }
 
 // forgetBackup drops a folder's backup bookkeeping and, if asked, its backup.
@@ -871,7 +903,7 @@ func (a *App) stopSyncWhere(what string, match func(discover.Class) bool) (int, 
 		if f.ID == meta.FolderID || splitGuard(f.ID) != nil || !match(discover.Classify(cmpOr(f.Label, f.ID), f.Path)) {
 			continue
 		}
-		if _, err := a.stopSync(ctx, c, f.ID); err != nil {
+		if _, err := a.stopSync(ctx, c, f.ID); err != nil && !isHistoryError(err) {
 			logx.Printf("%s %s: %v", what, cmpOr(f.Label, f.ID), err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", cmpOr(f.Label, f.ID), err)

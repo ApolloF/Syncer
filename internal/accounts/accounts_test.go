@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/ApolloF/syncer/internal/paths"
+	"github.com/ApolloF/syncer/internal/store"
 	"github.com/ApolloF/syncer/internal/syncthing"
 )
 
@@ -33,7 +35,7 @@ func openExclusive(p string) (*os.File, error) {
 
 type fakeST struct {
 	folders map[string]syncthing.Folder
-	failOn  string // "remove", "patch-path", "add": fail that call once
+	failOn  string // "remove", "patch-path", "add", "unpause": fail that call once
 	need    int    // files the shared folder still needs
 }
 
@@ -59,6 +61,10 @@ func (f *fakeST) PatchFolder(_ context.Context, id string, patch map[string]any)
 		x.Path = p
 	}
 	if v, ok := patch["paused"].(bool); ok {
+		if !v && f.failOn == "unpause" {
+			f.failOn = ""
+			return errors.New("injected")
+		}
 		x.Paused = v
 	}
 	f.folders[id] = x
@@ -110,6 +116,7 @@ func newWorld(t *testing.T) *world {
 	localRoot = func() string { return filepath.Join(root, "local") }
 	resolveLive = func(r Record) (string, error) { return filepath.Join(root, filepath.FromSlash(r.Rel)), nil }
 	t.Cleanup(func() { dir, localRoot, resolveLive = oldDir, oldLocal, oldResolve; crashHook = nil })
+	t.Cleanup(paths.SetRootForTest(paths.Roaming, filepath.Join(root, "roaming")))
 	_ = os.MkdirAll(dir(), 0o755)
 	w.env = Env{
 		ST: w.st,
@@ -597,9 +604,12 @@ func TestSwitchKeepsPausedFolders(t *testing.T) {
 }
 
 // TestRandomOperations runs random sequences of edits, splits, switches,
-// merges and crashes, and checks after each that no file content that ever
-// existed is gone, that no folder is left paused, and that every folder
-// Syncthing knows sits at a folder with its marker.
+// merges, crashes, games starting and exiting (also while saves move) and
+// folders paused by hand, and checks after each that no file content that
+// ever existed is gone, that no folder is left paused but those paused by
+// hand or held for the running game, that folders paused by hand stay
+// paused, and that every folder Syncthing knows sits at a folder with its
+// marker. At every journal write the folders whose saves move are paused.
 func TestRandomOperations(t *testing.T) {
 	type crash struct{}
 	seeds := 25
@@ -609,20 +619,49 @@ func TestRandomOperations(t *testing.T) {
 	for seed := 1; seed <= seeds; seed++ {
 		w := newWorld(t)
 		alice, bob := w.setup()
+		// Another game's folder, which no operation touches: the game hold
+		// pauses it while saves move.
+		other := filepath.Join(w.root, "Other")
+		_ = os.MkdirAll(filepath.Join(other, ".stfolder"), 0o755)
+		w.st.folders["other"] = syncthing.Folder{ID: "other", Label: "Other", Path: other}
 		rnd := newRand(uint64(seed))
 		seen := contents(t, w.live)
 		gen := 1
+		playing := false
+		byHand := map[string]bool{}
+		toggleGame := func() {
+			if playing = !playing; playing {
+				w.gameStarts()
+			} else {
+				w.gameExits()
+			}
+		}
 		for step := 0; step < 30; step++ {
-			// Crash at a random journal write about a third of the time.
+			// Crash at a random journal write about a third of the time, and
+			// start or exit the game at a random one about a third of the time.
+			at, n := -1, 0
 			if rnd.n(3) == 0 {
-				at, n := 1+rnd.n(8), 0
-				crashHook = func(*Journal) {
-					if n++; n == at {
-						panic(crash{})
+				at = 1 + rnd.n(8)
+			}
+			gameAt := -1
+			if rnd.n(3) == 0 {
+				gameAt = 1 + rnd.n(8)
+			}
+			crashHook = func(j *Journal) {
+				if err := w.movingPaused(j); err != nil {
+					t.Fatalf("seed %d step %d: %v", seed, step, err)
+				}
+				if n++; n == gameAt {
+					toggleGame()
+					if err := w.movingPaused(j); err != nil {
+						t.Fatalf("seed %d step %d, game playing %v: %v", seed, step, playing, err)
 					}
 				}
+				if n == at {
+					panic(crash{})
+				}
 			}
-			op := rnd.n(5)
+			op := rnd.n(8)
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
@@ -666,6 +705,23 @@ func TestRandomOperations(t *testing.T) {
 						m.Kind, m.Winner, m.Assign, m.Gen, m.Created = KindMerge, []string{alice, bob}[rnd.n(2)], nil, r.Gen+1, time.Now()
 						_ = Start(context.Background(), w.env, m)
 					}
+				case 5:
+					toggleGame()
+				case 6: // a folder paused by hand
+					ids := slices.DeleteFunc(w.folderIDs(), func(id string) bool { return w.st.folders[id].Paused })
+					if len(ids) > 0 {
+						id := ids[rnd.n(len(ids))]
+						_ = w.st.PatchFolder(context.Background(), id, map[string]any{"paused": true})
+						byHand[id] = true
+					}
+				case 7: // … and resumed by hand
+					for _, id := range w.folderIDs() {
+						if byHand[id] {
+							_ = w.st.PatchFolder(context.Background(), id, map[string]any{"paused": false})
+							delete(byHand, id)
+							break
+						}
+					}
 				}
 			}()
 			crashHook = nil
@@ -680,10 +736,30 @@ func TestRandomOperations(t *testing.T) {
 			if _, ok := PendingOp(); ok {
 				t.Fatalf("seed %d step %d: operation left unfinished", seed, step)
 			}
+			if !playing {
+				// What a later start does with folders an operation kept
+				// from the hold (releaseStaleHold).
+				w.gameExits()
+				if held := store.LoadState().GamePaused; len(held) > 0 {
+					t.Fatalf("seed %d step %d: held without a game: %v", seed, step, held)
+				}
+			}
+			held := store.LoadState().GamePaused
+			for id := range byHand {
+				if _, ok := w.st.folders[id]; !ok {
+					delete(byHand, id) // removed by a split or merge
+				}
+			}
 			live := 0
-			for id, f := range w.st.folders {
-				if f.Paused {
+			for _, id := range w.folderIDs() {
+				f := w.st.folders[id]
+				switch {
+				case byHand[id] && !f.Paused:
+					t.Fatalf("seed %d step %d: %s, paused by hand, was resumed", seed, step, id)
+				case f.Paused && !byHand[id] && !slices.Contains(held, id):
 					t.Fatalf("seed %d step %d: %s left paused", seed, step, id)
+				case !f.Paused && slices.Contains(held, id):
+					t.Fatalf("seed %d step %d: %s held for the game but resumed", seed, step, id)
 				}
 				if !exists(filepath.Join(f.Path, ".stfolder")) {
 					t.Fatalf("seed %d step %d: %s at %s has no marker", seed, step, id, f.Path)

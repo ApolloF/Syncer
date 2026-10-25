@@ -86,10 +86,16 @@ func (a *App) DeleteSaves(id, confirm string, noBackupOK bool) (string, error) {
 	stillThere := "the saves are still there"
 	if c != nil {
 		bid, err := a.stopSync(ctx, c, id) // carries the backup over to the new id
+		if bid != "" {
+			id = bid
+		}
 		if err != nil {
+			if isHistoryError(err) {
+				runtime.EventsEmit(a.ctx, "changed")
+				err = fmt.Errorf("couldn't keep the backup history of %s, so nothing was deleted (it no longer syncs on this PC): %w", label, err)
+			}
 			return id, err
 		}
-		id = bid
 		stillThere += ", but " + label + " no longer syncs on this PC (turn Sync back on to share it again)"
 		runtime.EventsEmit(a.ctx, "changed")
 		// Deleting a folder Syncthing still has would delete it on every PC.
