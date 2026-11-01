@@ -421,22 +421,3 @@ func isFile(p string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
-func clean(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return ""
-	}
-	return filepath.Clean(filepath.FromSlash(p))
-}
-
-// within reports whether child is parent or lies below it (case-insensitive).
-func within(parent, child string) bool {
-	parent, child = strings.ToLower(filepath.Clean(parent)), strings.ToLower(filepath.Clean(child))
-	if parent == child {
-		return true
-	}
-	if !strings.HasSuffix(parent, `\`) && !strings.HasSuffix(parent, "/") {
-		parent += string(filepath.Separator)
-	}
-	return strings.HasPrefix(child, parent)
-}

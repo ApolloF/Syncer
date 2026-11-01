@@ -648,7 +648,7 @@ var rename = os.Rename
 func renameRetry(from, to string) error {
 	var err error
 	for i, wait := 0, 10*time.Millisecond; i < 6; i, wait = i+1, wait*2 {
-		if err = rename(from, to); err == nil || !(errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION)) {
+		if err = rename(from, to); err == nil || (!errors.Is(err, windows.ERROR_ACCESS_DENIED) && !errors.Is(err, windows.ERROR_SHARING_VIOLATION)) {
 			return err
 		}
 		time.Sleep(wait)

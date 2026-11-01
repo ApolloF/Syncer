@@ -275,7 +275,7 @@ func mirror(ctx context.Context, f Folder, opts Options, stamp string, p *Progre
 		}
 		if m.Ignored(rel) || sc.skip(rel, d.IsDir()) {
 			// A negation can reach into an ignored folder.
-			if d.IsDir() && !(m.HasNegation() && !sc.on) {
+			if d.IsDir() && (!m.HasNegation() || sc.on) {
 				return filepath.SkipDir
 			}
 			return nil

@@ -322,7 +322,7 @@ func noIntroducers(ctx context.Context, c *syncthing.Client, ds []syncthing.Devi
 	for _, d := range ds {
 		id := d.DeviceID
 		_, introduced := st.Introduced[id]
-		if !d.Introducer || !(pcs[id] || d.IntroducedBy != "" || st.JoinRequests[id] || st.IgnoredPCs[id] || introduced || ours[id]) {
+		if !d.Introducer || (!pcs[id] && d.IntroducedBy == "" && !st.JoinRequests[id] && !st.IgnoredPCs[id] && !introduced && !ours[id]) {
 			continue
 		}
 		if err := c.PatchDevice(ctx, id, map[string]any{"introducer": false}); err != nil {
@@ -465,7 +465,7 @@ func validDeviceID(id string) bool {
 			if ch != '-' {
 				return false
 			}
-		} else if !(ch >= 'A' && ch <= 'Z' || ch >= '2' && ch <= '7') {
+		} else if (ch < 'A' || ch > 'Z') && (ch < '2' || ch > '7') {
 			return false
 		}
 	}

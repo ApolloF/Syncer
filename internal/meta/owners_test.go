@@ -177,22 +177,6 @@ func TestWriteVortexListsLeavesAnUnchangedFileAlone(t *testing.T) {
 	}
 }
 
-// writtenBySelf records PC device's file, as it is now, as last written by
-// that PC, as a reconcile finds out from Syncthing.
-func writtenBySelf(t *testing.T, device string) {
-	t.Helper()
-	sum, ok := fileSum(device)
-	if !ok {
-		t.Fatalf("no file of %s", device)
-	}
-	writers.Lock()
-	defer writers.Unlock()
-	if writers.m == nil {
-		writers.m = map[string]writerCheck{}
-	}
-	writers.m[device] = writerCheck{sum, true}
-}
-
 // fakeSyncthing is a Syncthing that, besides Syncer's PCs, syncs a notes
 // vault with a server and a laptop, as one paired before Syncer was fixed:
 // every folder offered to every device.
