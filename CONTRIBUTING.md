@@ -16,7 +16,9 @@ Thanks for helping. Syncer is a one-person project, so small, focused changes ge
 
    ```bash
    go vet ./... && go vet -tags personal ./...
+   golangci-lint run ./... && golangci-lint run --build-tags personal ./...
    go test ./... && go test -tags personal ./...
+   go test -race -short ./... && go test -race -short -tags personal ./...
    cd frontend && npm ci && npm run check && npx vitest run
    cd .. && wails build
    ```
@@ -26,7 +28,7 @@ Thanks for helping. Syncer is a one-person project, so small, focused changes ge
 
 ## Build and layout
 
-Requirements: Go 1.26+, Node 22+, [Wails v2](https://wails.io) (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0`).
+Requirements: Go 1.26+, Node 22+, [Wails v2](https://wails.io) (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0`), [golangci-lint](https://golangci-lint.run) at the version pinned in `.github/workflows/build.yml` (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`), and a C compiler such as mingw gcc for `go test -race`.
 
 ```bash
 wails dev          # live-reloading app
