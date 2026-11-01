@@ -1,0 +1,21 @@
+version: "2"
+
+linters:
+  # The standard set: govet, ineffassign, staticcheck, unused (errcheck is in
+  # it too, see below). CI pins the golangci-lint version in
+  # .github/workflows/build.yml; run the same one locally.
+  default: standard
+  disable:
+    # Not enabled yet: it finds about 50 unchecked Close/Remove calls that need
+    # fixing one by one before it can gate CI.
+    - errcheck
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # Error strings are shown to the user as they are, so they are
+        # sentences: capitalized and with a full stop.
+        - -ST1005
+        # Doc comments on vars and consts here often read "Name, when set, ..."
+        # or "Name: ..."; the name still comes first, which is what matters.
+        - -ST1022

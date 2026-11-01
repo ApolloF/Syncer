@@ -949,7 +949,7 @@ func swap(ctx context.Context, env Env, j *Journal, m *Move) error {
 		}
 	}
 	if m.Step == swapHold {
-		if !(exists(m.Hold) && !exists(m.Live)) {
+		if !exists(m.Hold) || exists(m.Live) {
 			if err := os.Rename(m.Live, m.Hold); err != nil {
 				return back(fmt.Errorf("could not move the current saves (is the game running?): %w", err))
 			}
@@ -975,7 +975,7 @@ func swap(ctx context.Context, env Env, j *Journal, m *Move) error {
 				return j.failAt(err)
 			}
 		}
-		if !(exists(m.Live) && !exists(m.In)) {
+		if !exists(m.Live) || exists(m.In) {
 			if err := moveDir(m.In, m.Live); err != nil {
 				return back(fmt.Errorf("could not bring in the other saves: %w", err))
 			}
@@ -995,7 +995,7 @@ func swap(ctx context.Context, env Env, j *Journal, m *Move) error {
 		}
 	}
 	if m.Step == swapOut {
-		if !(exists(m.Out) && !exists(m.Hold)) {
+		if !exists(m.Out) || exists(m.Hold) {
 			if exists(m.Out) {
 				if _, err := retire(m.Out); err != nil {
 					return j.failAt(err)

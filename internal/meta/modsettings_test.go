@@ -79,3 +79,19 @@ func TestModSettingsNewestWins(t *testing.T) {
 		t.Fatal("mod options stayed on without finding mods")
 	}
 }
+
+// writtenBySelf records PC device's file, as it is now, as last written by
+// that PC, as a reconcile finds out from Syncthing.
+func writtenBySelf(t *testing.T, device string) {
+	t.Helper()
+	sum, ok := fileSum(device)
+	if !ok {
+		t.Fatalf("no file of %s", device)
+	}
+	writers.Lock()
+	defer writers.Unlock()
+	if writers.m == nil {
+		writers.m = map[string]writerCheck{}
+	}
+	writers.m[device] = writerCheck{sum, true}
+}

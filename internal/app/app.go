@@ -1,3 +1,6 @@
+// Package app is the desktop app: the Wails App whose methods the frontend
+// calls, the tray, the background and scheduled runs, the local launcher API
+// and the glue that wires the internal packages to the UI.
 package app
 
 import (
@@ -201,13 +204,13 @@ type Overview struct {
 	Target     string           `json:"target"`
 	LastBackup *store.BackupRun `json:"lastBackup"` // the last attempt, failed or not
 	// LastSuccess is when a backup last finished without errors; zero if never.
-	LastSuccess time.Time `json:"lastSuccess"`
-	BackingUp  bool             `json:"backingUp"`
-	Gaming     bool             `json:"gaming"` // automatic backups are holding off right now
-	Paused     bool             `json:"paused"` // syncing and automatic backups are paused (until settings.pausedUntil)
-	Settings   store.Settings   `json:"settings"`
-	Version    string           `json:"version"`
-	Update     *UpdateInfo      `json:"update"` // a newer release, if one is out
+	LastSuccess time.Time      `json:"lastSuccess"`
+	BackingUp   bool           `json:"backingUp"`
+	Gaming      bool           `json:"gaming"` // automatic backups are holding off right now
+	Paused      bool           `json:"paused"` // syncing and automatic backups are paused (until settings.pausedUntil)
+	Settings    store.Settings `json:"settings"`
+	Version     string         `json:"version"`
+	Update      *UpdateInfo    `json:"update"` // a newer release, if one is out
 	// VersionGaps: linked PCs running an older or newer Syncer than this one.
 	VersionGaps []VersionGap `json:"versionGaps"`
 	// Waiting: folders from other PCs that wait for the user's OK.
@@ -490,7 +493,7 @@ func normalizeID(id string) (string, error) {
 		return "", errors.New("that doesn't look like a device ID (expected 56 letters/digits)")
 	}
 	for _, ch := range raw {
-		if !(ch >= 'A' && ch <= 'Z' || ch >= '2' && ch <= '7') {
+		if (ch < 'A' || ch > 'Z') && (ch < '2' || ch > '7') {
 			return "", errors.New("device IDs only contain letters A–Z and digits 2–7")
 		}
 	}
@@ -909,7 +912,7 @@ func applySettingsInput(s *store.Settings, in, old store.Settings) {
 // modsAutoOn reports whether adding mod folders automatically just started
 // (or its size limit changed), so it should run now.
 func modsAutoOn(old, s store.Settings) bool {
-	return features.Mods && s.FindMods && s.AutoAddMods && (!(old.FindMods && old.AutoAddMods) || s.ModsMaxGB != old.ModsMaxGB)
+	return features.Mods && s.FindMods && s.AutoAddMods && (!old.FindMods || !old.AutoAddMods || s.ModsMaxGB != old.ModsMaxGB)
 }
 
 // publishSettings shares a change of the mod options with the other PCs now.

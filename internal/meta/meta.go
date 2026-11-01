@@ -1062,15 +1062,15 @@ func ModVersionsDir(id string) string {
 	return filepath.Join(paths.Root(paths.Local), "Syncer", "mod-versions", id)
 }
 
+// HoldNewMod, when set, says whether a new mod folder must start paused
+// (its mod manager is open) and remembers to resume it.
+var HoldNewMod func(id string) bool
+
 // ModSpec is how a mod folder of kind is added. A staging folder uses
 // Vortex's own marker as Syncthing's, so no .stfolder appears among the mods
 // and the folder stops, rather than looking emptied, if its drive is
 // missing. Replaced files are kept for a week. A PC receiving deployed mods
 // only takes them from the source, and stays paused between audited updates.
-// HoldNewMod, when set, says whether a new mod folder must start paused
-// (its mod manager is open) and remembers to resume it.
-var HoldNewMod func(id string) bool
-
 func ModSpec(id, label, path, kind string, source bool) FolderSpec {
 	v := syncthing.StaggeredVersioning()
 	v["params"] = map[string]string{"maxAge": "604800", "cleanInterval": "3600"}

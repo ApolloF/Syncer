@@ -48,12 +48,37 @@ jobs:
         working-directory: frontend
         run: npm test
 
+      - name: Vet
+        # Both builds (see internal/features): the personal tag compiles the
+        # other half of a few files.
+        run: |
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet -tags personal ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0 # the version to run locally too (CONTRIBUTING.md)
+
+      - name: Lint (personal build)
+        # The action above put golangci-lint on PATH.
+        run: golangci-lint run --build-tags personal ./...
+
       - name: Test
         run: go test ./...
 
       - name: Test (personal build)
         # The personal build is tested too (see internal/features).
         run: go test -tags personal ./...
+
+      - name: Test with the race detector
+        # The sync code is concurrent; -short keeps the randomized crash test
+        # in internal/accounts small (the full run is above).
+        run: |
+          go test -race -short ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -race -short -tags personal ./...
 
       - name: Version
         # Release builds carry their tag (shown in the app, used by the update
